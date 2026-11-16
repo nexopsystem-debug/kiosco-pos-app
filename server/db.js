@@ -106,6 +106,17 @@ async function initDatabase() {
       ON CONFLICT (key) DO NOTHING;
     `);
 
+    // Corrección histórica idempotente para venta de prueba #2 reportada por usuario ($1.40 dividida en Divisas $1.00 y Pago Móvil $0.40)
+    await client.query(`
+      UPDATE sale_payments 
+      SET amount_usd = 1.00, amount_bs = 1000.00 
+      WHERE sale_id = 2 AND payment_method LIKE '%Divisas%' AND amount_usd = 1.40;
+      
+      UPDATE sale_payments 
+      SET amount_usd = 0.40, amount_bs = 400.00 
+      WHERE sale_id = 2 AND payment_method LIKE '%Pago%' AND amount_usd = 1.40;
+    `);
+
     // Seed de productos de prueba si está vacía
     const countRes = await client.query('SELECT COUNT(*) FROM products');
     if (parseInt(countRes.rows[0].count, 10) === 0) {
