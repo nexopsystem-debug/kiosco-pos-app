@@ -1,11 +1,11 @@
 [
   {
     "id": 1,
-    "name": "Coca-Cola 1.5L",
+    "name": "Pepsi 2L",
     "category": "Bebidas",
     "price_usd": 2,
-    "stock": 22,
-    "image_url": "https://images.unsplash.com/photo-1622483767028-3f66f32aef97?w=500&auto=format&fit=crop&q=80",
+    "stock": 6,
+    "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/1000398302-1794800499868.jpg",
     "is_active": true
   },
   {
