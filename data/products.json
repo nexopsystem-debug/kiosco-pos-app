@@ -70,5 +70,14 @@
     "stock": 20,
     "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/1000398314-1794802009729.jpg",
     "is_active": true
+  },
+  {
+    "id": 18,
+    "name": "Cigarros Belmont Detallado",
+    "category": "Cigarros",
+    "price_usd": 0.3,
+    "stock": 20,
+    "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/1000398309-1794802049748.jpg",
+    "is_active": true
   }
 ]
