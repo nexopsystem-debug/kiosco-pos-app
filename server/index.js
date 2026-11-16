@@ -1232,26 +1232,78 @@ app.get('/api/reports/daily-closing/preview', async (req, res) => {
       [dayStart, dayEnd]
     );
 
+    const paymentBreakdown = {
+      divisaUsd: { usd: 0, bs: 0, ops: 0 },
+      pagoMovilBs: { usd: 0, bs: 0, ops: 0 },
+      efectivoBs: { usd: 0, bs: 0, ops: 0 },
+      puntoBs: { usd: 0, bs: 0, ops: 0 }
+    };
+
+    payRes.rows.forEach(r => {
+      const m = r.payment_method || '';
+      const u = parseFloat(r.sum_usd) || 0;
+      const b = parseFloat(r.sum_bs) || 0;
+      const c = parseInt(r.count, 10) || 0;
+      if (m.includes('Divisa') || m.includes('Efectivo $') || m.includes('$')) {
+        paymentBreakdown.divisaUsd.usd += u;
+        paymentBreakdown.divisaUsd.bs += b;
+        paymentBreakdown.divisaUsd.ops += c;
+      } else if (m.includes('Móvil') || m.includes('Movil')) {
+        paymentBreakdown.pagoMovilBs.usd += u;
+        paymentBreakdown.pagoMovilBs.bs += b;
+        paymentBreakdown.pagoMovilBs.ops += c;
+      } else if (m.includes('Efectivo Bs')) {
+        paymentBreakdown.efectivoBs.usd += u;
+        paymentBreakdown.efectivoBs.bs += b;
+        paymentBreakdown.efectivoBs.ops += c;
+      } else if (m.includes('Punto') || m.includes('Tarjeta')) {
+        paymentBreakdown.puntoBs.usd += u;
+        paymentBreakdown.puntoBs.bs += b;
+        paymentBreakdown.puntoBs.ops += c;
+      }
+    });
+
     res.json({
       success: true,
       date: todayStr,
       currentTime: timeStr.slice(0, 5),
       shift1: {
         count: parseInt(s1.rows[0].count, 10),
+        ticketsCount: parseInt(s1.rows[0].count, 10),
         usd: parseFloat(s1.rows[0].usd),
-        bs: parseFloat(s1.rows[0].bs)
+        totalUsd: parseFloat(s1.rows[0].usd),
+        bs: parseFloat(s1.rows[0].bs),
+        totalBs: parseFloat(s1.rows[0].bs)
       },
       shift2: {
         count: parseInt(s2.rows[0].count, 10),
+        ticketsCount: parseInt(s2.rows[0].count, 10),
         usd: parseFloat(s2.rows[0].usd),
-        bs: parseFloat(s2.rows[0].bs)
+        totalUsd: parseFloat(s2.rows[0].usd),
+        bs: parseFloat(s2.rows[0].bs),
+        totalBs: parseFloat(s2.rows[0].bs)
       },
       day: {
         count: parseInt(dayTot.rows[0].count, 10),
+        ticketsCount: parseInt(dayTot.rows[0].count, 10),
         usd: parseFloat(dayTot.rows[0].usd),
+        totalUsd: parseFloat(dayTot.rows[0].usd),
         bs: parseFloat(dayTot.rows[0].bs),
-        items: parseInt(dayTot.rows[0].items, 10)
+        totalBs: parseFloat(dayTot.rows[0].bs),
+        items: parseInt(dayTot.rows[0].items, 10),
+        itemsCount: parseInt(dayTot.rows[0].items, 10)
       },
+      dayTotal: {
+        count: parseInt(dayTot.rows[0].count, 10),
+        ticketsCount: parseInt(dayTot.rows[0].count, 10),
+        usd: parseFloat(dayTot.rows[0].usd),
+        totalUsd: parseFloat(dayTot.rows[0].usd),
+        bs: parseFloat(dayTot.rows[0].bs),
+        totalBs: parseFloat(dayTot.rows[0].bs),
+        items: parseInt(dayTot.rows[0].items, 10),
+        itemsCount: parseInt(dayTot.rows[0].items, 10)
+      },
+      paymentBreakdown,
       payments: payRes.rows.map(r => ({
         method: r.payment_method,
         count: parseInt(r.count, 10),
@@ -1267,7 +1319,9 @@ app.get('/api/reports/daily-closing/preview', async (req, res) => {
 // Ejecución y registro oficial del Cierre de Caja
 app.post('/api/reports/daily-closing', async (req, res) => {
   try {
-    const { cash_drawer_usd = 0, notes = '', closed_by = 'Cajero Principal' } = req.body;
+    const closed_by = req.body.closed_by || req.body.cashier_name || 'Cajero Principal';
+    const cash_drawer_usd = req.body.cash_drawer_usd !== undefined ? req.body.cash_drawer_usd : 0;
+    const notes = req.body.notes || '';
     const vzla = getVenezuelaTime();
     const todayStr = formatDate(vzla);
     const timeStr = formatTime(vzla);
@@ -1449,9 +1503,19 @@ app.get('/api/reports/daily-closing/history', async (req, res) => {
     const closingsRes = await db.query(
       `SELECT * FROM daily_closings ORDER BY closing_date DESC, closed_at DESC LIMIT 30`
     );
+    const mapped = closingsRes.rows.map(r => ({
+      ...r,
+      cashier_name: r.closed_by,
+      difference_usd: r.cash_difference_usd,
+      created_at: r.closed_at,
+      shift1_tickets_count: r.shift1_sales_count,
+      shift2_tickets_count: r.shift2_sales_count,
+      day_tickets_count: r.day_sales_count
+    }));
     res.json({
       success: true,
-      closings: closingsRes.rows
+      history: mapped,
+      closings: mapped
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
