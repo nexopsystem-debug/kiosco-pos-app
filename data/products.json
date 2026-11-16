@@ -43,5 +43,14 @@
     "stock": 6,
     "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/1000398303-1794801442084.jpg",
     "is_active": true
+  },
+  {
+    "id": 15,
+    "name": "Cigarros Universal Detallado",
+    "category": "Cigarros",
+    "price_usd": 0.2,
+    "stock": 20,
+    "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/1000398315-1794801920615.jpg",
+    "is_active": true
   }
 ]
