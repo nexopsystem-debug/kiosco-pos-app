@@ -653,6 +653,56 @@ app.get('/api/uploads/recent', async (req, res) => {
 // 3. ENDPOINTS DE VENTAS (POS)
 // ==========================================
 
+// Función auxiliar para notificar stock bajo a Telegram y N8N
+async function notifyLowStock(lowStockAlerts) {
+  if (!lowStockAlerts || !lowStockAlerts.length) return;
+  const token = process.env.TELEGRAM_BOT_TOKEN || '9165377394:AAH59wqZeB1AeKUQJzxJcXd2L0DJFk808mw';
+  const chatId = process.env.TELEGRAM_CHAT_ID || '7827395871';
+
+  const itemsList = lowStockAlerts.map(i => `• *${i.name}*: le quedan *${i.stock} ${i.stock === 1 ? 'unidad' : 'unidades'}*`).join('\n');
+  const text = [
+    '⚠️ *ALERTA DE STOCK BAJO - KIOSCO*',
+    '━━━━━━━━━━━━━━━━━━━━━━',
+    'Se ha concretado una venta y los siguientes productos están por agotarse (menos de 5 unidades):',
+    '',
+    itemsList,
+    '',
+    '👉 *Acción sugerida:* Reponer inventario desde el Almacén.',
+    `📅 ${new Date().toLocaleDateString('es-VE')} - ⏰ ${new Date().toLocaleTimeString('es-VE', { timeZone: 'America/Caracas' })}`
+  ].join('\n');
+
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        parse_mode: 'Markdown'
+      })
+    });
+    console.log('✅ Alerta de stock bajo enviada a Telegram');
+  } catch (err) {
+    console.warn('⚠️ No se pudo enviar alerta de stock a Telegram:', err.message);
+  }
+
+  // Notificar también a N8N Webhook si está disponible
+  const alertWebhook = process.env.N8N_ALERT_WEBHOOK_URL || 'https://nexop-n8n.nexopsystem.com/webhook/kiosco-stock-alert';
+  try {
+    await fetch(alertWebhook, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event: 'low_stock_alert',
+        items: lowStockAlerts,
+        timestamp: new Date().toISOString()
+      })
+    });
+  } catch (wErr) {
+    // Webhook opcional
+  }
+}
+
 app.post('/api/sales', async (req, res) => {
   const client = await db.pool.connect();
   try {
@@ -666,6 +716,8 @@ app.post('/api/sales', async (req, res) => {
     const rate = await getExchangeRate();
     let totalUsd = 0;
     let itemsCount = 0;
+    const lowStockAlerts = [];
+    const createdAt = req.body.offline_created_at ? new Date(req.body.offline_created_at) : new Date();
 
     // Calcular y validar items
     for (const item of items) {
@@ -679,18 +731,25 @@ app.post('/api/sales', async (req, res) => {
       totalUsd += subtotal;
       itemsCount += qty;
 
-      // Descontar inventario
-      await client.query('UPDATE products SET stock = GREATEST(0, stock - $1) WHERE id = $2', [qty, item.id]);
+      // Descontar inventario y detectar stock bajo (< 5)
+      const updRes = await client.query(
+        'UPDATE products SET stock = GREATEST(0, stock - $1) WHERE id = $2 RETURNING id, name, stock',
+        [qty, item.id]
+      );
+      const newStock = updRes.rows[0].stock;
+      if (newStock < 5) {
+        lowStockAlerts.push({ id: item.id, name: updRes.rows[0].name, stock: newStock });
+      }
     }
 
     const totalBs = parseFloat((totalUsd * rate).toFixed(2));
-    const saleNumber = 'V-' + Date.now().toString().slice(-6);
+    const saleNumber = req.body.sale_number || ('V-' + Date.now().toString().slice(-6));
 
-    // Insertar venta
+    // Insertar venta (admite timestamp original si proviene de sincronización offline)
     const saleRes = await client.query(
-      `INSERT INTO sales (sale_number, total_usd, total_bs, exchange_rate, items_count)
-       VALUES ($1, $2, $3, $4, $5) RETURNING id, sale_number, total_usd, total_bs, created_at`,
-      [saleNumber, totalUsd, totalBs, rate, itemsCount]
+      `INSERT INTO sales (sale_number, total_usd, total_bs, exchange_rate, items_count, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, sale_number, total_usd, total_bs, created_at`,
+      [saleNumber, totalUsd, totalBs, rate, itemsCount, createdAt]
     );
     const saleId = saleRes.rows[0].id;
 
@@ -727,6 +786,12 @@ app.post('/api/sales', async (req, res) => {
     }
 
     await client.query('COMMIT');
+
+    // Notificar alerta de stock bajo a Telegram en segundo plano
+    if (lowStockAlerts.length > 0) {
+      notifyLowStock(lowStockAlerts).catch(e => console.warn('Aviso de stock error:', e.message));
+    }
+
     res.json({
       success: true,
       sale: {
@@ -736,8 +801,10 @@ app.post('/api/sales', async (req, res) => {
         totalBs,
         rate,
         itemsCount,
-        createdAt: saleRes.rows[0].created_at
-      }
+        createdAt: saleRes.rows[0].created_at,
+        is_offline_sync: !!req.body.is_offline_sync
+      },
+      lowStockAlerts
     });
   } catch (err) {
     await client.query('ROLLBACK');

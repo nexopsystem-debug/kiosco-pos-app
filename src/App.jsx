@@ -37,7 +37,9 @@ import {
   ArrowUpRight,
   Lock,
   Unlock,
-  KeyRound
+  KeyRound,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 
 const PRESET_IMAGES = [
@@ -135,6 +137,17 @@ export default function App() {
   const [accountingSearch, setAccountingSearch] = useState('');
   const [accountingCategory, setAccountingCategory] = useState('Todos');
 
+  // Estados de Conectividad y Modo Offline
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
+  const [offlineSalesQueue, setOfflineSalesQueue] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('kiosco_offline_sales') || '[]');
+    } catch {
+      return [];
+    }
+  });
+  const [syncingOffline, setSyncingOffline] = useState(false);
+
   // Toast Helper
   const showToast = (msg) => {
     setToastMessage(msg);
@@ -143,7 +156,7 @@ export default function App() {
     }, 4500);
   };
 
-  // Cargar productos y tasa inicial
+  // Cargar productos y tasa inicial con soporte de caché offline
   const loadProducts = async () => {
     try {
       setLoading(true);
@@ -152,15 +165,106 @@ export default function App() {
       if (data.success) {
         setProducts(data.products || []);
         if (data.rate) setExchangeRate(data.rate);
+        try {
+          localStorage.setItem('kiosco_products_cache', JSON.stringify(data.products || []));
+        } catch (e) {}
       } else {
-        setError(data.error || 'Error al cargar productos');
+        throw new Error(data.error || 'Error al cargar productos');
       }
     } catch (err) {
+      // Intentar cargar productos desde caché local offline
+      try {
+        const cached = localStorage.getItem('kiosco_products_cache');
+        if (cached) {
+          const prods = JSON.parse(cached);
+          if (prods && prods.length > 0) {
+            setProducts(prods);
+            showToast('📦 Catálogo cargado desde memoria local (Modo Offline)');
+            setError('');
+            return;
+          }
+        }
+      } catch (e) {}
       setError('No se pudo conectar al servidor');
     } finally {
       setLoading(false);
     }
   };
+
+  // Sincronizar ventas guardadas localmente hacia PostgreSQL
+  const syncOfflineSales = async () => {
+    if (syncingOffline) return;
+    let queue = [];
+    try {
+      queue = JSON.parse(localStorage.getItem('kiosco_offline_sales') || '[]');
+    } catch {
+      queue = [];
+    }
+    if (!queue.length) return;
+
+    try {
+      setSyncingOffline(true);
+      showToast(`🔄 Sincronizando ${queue.length} venta(s) guardadas localmente...`);
+      const remainingQueue = [];
+
+      for (const sale of queue) {
+        try {
+          const res = await fetch('/api/sales', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              items: sale.items,
+              payments: sale.payments,
+              sale_number: sale.saleNumber,
+              offline_created_at: sale.offline_created_at || sale.createdAt,
+              is_offline_sync: true
+            })
+          });
+          const data = await res.json();
+          if (!data.success) {
+            remainingQueue.push(sale);
+          }
+        } catch (e) {
+          remainingQueue.push(sale);
+        }
+      }
+
+      setOfflineSalesQueue(remainingQueue);
+      localStorage.setItem('kiosco_offline_sales', JSON.stringify(remainingQueue));
+
+      if (remainingQueue.length === 0) {
+        showToast('✅ Todas las ventas offline fueron sincronizadas con el servidor');
+        loadProducts();
+      } else {
+        showToast(`⚠️ Quedan ${remainingQueue.length} ventas pendientes por sincronizar`);
+      }
+    } catch (err) {
+      console.warn('Error sincronizando ventas offline:', err);
+    } finally {
+      setSyncingOffline(false);
+    }
+  };
+
+  // Detectar cambios de conexión a internet
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      showToast('📶 Conexión restaurada (En Línea)');
+      syncOfflineSales();
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      showToast('⚠️ Sin conexión a internet. Activado Modo Offline de respaldo.');
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   // Cargar las imágenes más recientes guardadas en el repositorio
   const loadRecentImages = async () => {
@@ -284,6 +388,14 @@ export default function App() {
 
   // Manipulación de cantidades en el carrito
   const updateQuantity = (id, delta) => {
+    const prod = products.find(p => p.id === id);
+    if (delta > 0 && prod && prod.stock !== undefined && prod.stock !== null) {
+      const current = cart[id] || 0;
+      if (current >= prod.stock) {
+        showToast(`⚠️ No hay más unidades disponibles de ${prod.name} (Stock: ${prod.stock})`);
+        return;
+      }
+    }
     setCart(prev => {
       const current = prev[id] || 0;
       const next = Math.max(0, current + delta);
@@ -298,6 +410,7 @@ export default function App() {
 
   const setDirectQuantity = (id, val) => {
     const parsed = parseInt(val, 10);
+    const prod = products.find(p => p.id === id);
     if (isNaN(parsed) || parsed <= 0) {
       setCart(prev => {
         const copy = { ...prev };
@@ -305,7 +418,12 @@ export default function App() {
         return copy;
       });
     } else {
-      setCart(prev => ({ ...prev, [id]: parsed }));
+      if (prod && prod.stock !== undefined && prod.stock !== null && parsed > prod.stock) {
+        showToast(`⚠️ Stock máximo disponible de ${prod.name}: ${prod.stock}`);
+        setCart(prev => ({ ...prev, [id]: prod.stock }));
+      } else {
+        setCart(prev => ({ ...prev, [id]: parsed }));
+      }
     }
   };
 
@@ -517,14 +635,27 @@ export default function App() {
         return;
       }
 
-      const res = await fetch('/api/sales', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items, payments })
-      });
+      let res;
+      let data;
+      let isOfflineSale = false;
 
-      const data = await res.json();
-      if (data.success) {
+      try {
+        res = await fetch('/api/sales', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items, payments })
+        });
+        if (res.ok) {
+          data = await res.json();
+        } else {
+          isOfflineSale = true;
+        }
+      } catch (networkErr) {
+        console.warn('Fallo de red al registrar venta, guardando localmente (offline):', networkErr);
+        isOfflineSale = true;
+      }
+
+      if (!isOfflineSale && data && data.success) {
         setLastSaleData({
           ...data.sale,
           itemsCount: totalItemsCount,
@@ -536,8 +667,55 @@ export default function App() {
         setCart({});
         loadProducts(); // Actualizar inventario en vivo
         loadAccountingReport(accountingPeriod); // Actualizar contabilidad en tiempo real
+
+        if (data.lowStockAlerts && data.lowStockAlerts.length > 0) {
+          const names = data.lowStockAlerts.map(a => `${a.name} (${a.stock} disp.)`).join(', ');
+          showToast(`⚠️ Alerta Telegram: Stock bajo en ${names}`);
+        }
+      } else if (isOfflineSale || !res || !res.ok) {
+        // Encolar venta en modo offline (LocalStorage)
+        const offlineSaleId = 'OFF-' + Date.now();
+        const offlineCreatedAt = new Date().toISOString();
+        const offlineSaleRecord = {
+          id: offlineSaleId,
+          items,
+          payments,
+          total_usd: totalFinalUSD,
+          total_bs: totalFinalBS,
+          created_at: offlineCreatedAt,
+          itemsCount: totalItemsCount,
+          vuelto: vueltoCalculado,
+          isOffline: true
+        };
+        const updatedQueue = [...offlineSalesQueue, offlineSaleRecord];
+        setOfflineSalesQueue(updatedQueue);
+        localStorage.setItem('kiosco_offline_sales', JSON.stringify(updatedQueue));
+
+        // Descontar inventario localmente en memoria
+        setProducts(prev => prev.map(p => {
+          const bought = items.find(it => it.id === p.id);
+          if (bought) {
+            return { ...p, stock: Math.max(0, (p.stock || 0) - bought.quantity) };
+          }
+          return p;
+        }));
+
+        setLastSaleData({
+          id: offlineSaleId,
+          total_usd: totalFinalUSD,
+          total_bs: totalFinalBS,
+          created_at: offlineCreatedAt,
+          itemsCount: totalItemsCount,
+          vuelto: vueltoCalculado,
+          payments: payments,
+          isOffline: true
+        });
+        setShowPaymentModal(false);
+        setShowSuccessModal(true);
+        setCart({});
+        showToast('📱 Venta guardada en Modo Offline. Se sincronizará automáticamente cuando vuelva internet.');
       } else {
-        alert('Error al registrar venta: ' + data.error);
+        alert('Error al registrar venta: ' + (data?.error || 'Desconocido'));
       }
     } catch (err) {
       alert('Error de conexión al procesar la venta');
@@ -947,31 +1125,49 @@ export default function App() {
       {/* ============================================================ */}
       {/* 1. ENCABEZADO SUPERIOR LIMPIO Y PROFESIONAL                 */}
       {/* ============================================================ */}
-      <header className="sticky top-0 z-30 bg-slate-900 text-white shadow-lg px-4 py-3 border-b border-slate-800">
-        <div className="max-w-6xl mx-auto flex items-center justify-between gap-3">
-          {/* Logo y Nombre estrictamente: Kiosco */}
-          <div className="flex items-center space-x-2.5">
-            <span className="p-2 bg-emerald-500 rounded-xl text-slate-950 font-black text-xl shadow-md flex items-center justify-center">
-              🏪
-            </span>
-            <div>
-              <h1 className="text-xl md:text-2xl font-black tracking-tight text-white leading-none">
-                Kiosco
-              </h1>
+      <header className="sticky top-0 z-30 bg-slate-900 text-white shadow-lg px-3 sm:px-4 py-2.5 sm:py-3 border-b border-slate-800">
+        <div className="max-w-6xl mx-auto flex flex-col md:flex-row md:items-center md:justify-between gap-2 sm:gap-3">
+          {/* Fila 1 en móvil / Izquierda en desktop: Logo, Pill de Conexión y Tasa Fija (en móvil) */}
+          <div className="flex items-center justify-between md:justify-start gap-2 sm:gap-3 w-full md:w-auto">
+            <div className="flex items-center space-x-2">
+              <span className="p-1.5 sm:p-2 bg-emerald-500 rounded-xl text-slate-950 font-black text-lg sm:text-xl shadow-md flex items-center justify-center">
+                🏪
+              </span>
+              <div>
+                <h1 className="text-lg sm:text-2xl font-black tracking-tight text-white leading-none">
+                  Kiosco
+                </h1>
+              </div>
+              {/* Pill indicador online/offline */}
+              <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                isOnline ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30 animate-pulse'
+              }`}>
+                {isOnline ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
+                <span className="hidden sm:inline">{isOnline ? 'En Línea' : 'Offline'}</span>
+              </div>
+            </div>
+
+            {/* Badge de Tasa Fija en móvil (visible a la derecha de la fila 1) */}
+            <div className="flex md:hidden bg-slate-800 border border-slate-700 rounded-xl px-2.5 py-1 items-center space-x-1.5 shadow-inner">
+              <Coins className="w-3.5 h-3.5 text-amber-400" />
+              <div className="text-right">
+                <span className="text-[8px] text-slate-400 block leading-none font-medium">Tasa Fija</span>
+                <span className="text-[11px] font-black text-amber-400 font-mono">1.000 Bs/$</span>
+              </div>
             </div>
           </div>
 
-          {/* Selector de Vistas: Venta (POS) vs Almacén (Inventario) vs Contabilidad */}
-          <div className="flex bg-slate-800 p-1 rounded-xl border border-slate-700 shadow-inner">
+          {/* Fila 2 en móvil / Centro en desktop: Selector de Vistas */}
+          <div className="grid grid-cols-3 md:flex bg-slate-800 p-1 rounded-xl border border-slate-700 shadow-inner w-full md:w-auto">
             <button
               onClick={() => setActiveTab('pos')}
-              className={`px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs md:text-sm font-bold flex items-center gap-1.5 transition-all ${
+              className={`justify-center px-2 sm:px-3.5 py-1.5 rounded-lg text-xs md:text-sm font-bold flex items-center gap-1 transition-all ${
                 activeTab === 'pos'
                   ? 'bg-emerald-500 text-slate-950 shadow-sm'
                   : 'text-slate-300 hover:text-white'
               }`}
             >
-              <ShoppingCart className="w-4 h-4" />
+              <ShoppingCart className="w-3.5 h-3.5 md:w-4 md:h-4 shrink-0" />
               <span>Venta</span>
               {totalItemsCount > 0 && (
                 <span className="bg-slate-900 text-emerald-400 text-[10px] font-black px-1.5 py-0.2 rounded-full">
@@ -981,35 +1177,35 @@ export default function App() {
             </button>
             <button
               onClick={() => handleRequestAdminAccess('inventory')}
-              className={`px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs md:text-sm font-bold flex items-center gap-1.5 transition-all ${
+              className={`justify-center px-2 sm:px-3.5 py-1.5 rounded-lg text-xs md:text-sm font-bold flex items-center gap-1 transition-all ${
                 activeTab === 'inventory'
                   ? 'bg-emerald-500 text-slate-950 shadow-sm'
                   : 'text-slate-300 hover:text-white'
               }`}
             >
-              <Warehouse className="w-4 h-4" />
+              <Warehouse className="w-3.5 h-3.5 md:w-4 md:h-4 shrink-0" />
               <span>Almacén</span>
               {isAdminUnlocked ? (
-                <Unlock className="w-3 h-3 text-emerald-300 ml-0.5" />
+                <Unlock className="w-3 h-3 text-emerald-300 ml-0.5 shrink-0" />
               ) : (
-                <Lock className="w-3 h-3 text-slate-400 ml-0.5" />
+                <Lock className="w-3 h-3 text-slate-400 ml-0.5 shrink-0" />
               )}
             </button>
             <button
               onClick={() => setActiveTab('accounting')}
-              className={`px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs md:text-sm font-bold flex items-center gap-1.5 transition-all ${
+              className={`justify-center px-2 sm:px-3.5 py-1.5 rounded-lg text-xs md:text-sm font-bold flex items-center gap-1 transition-all ${
                 activeTab === 'accounting'
                   ? 'bg-emerald-500 text-slate-950 shadow-sm'
                   : 'text-slate-300 hover:text-white'
               }`}
             >
-              <BarChart3 className="w-4 h-4" />
+              <BarChart3 className="w-3.5 h-3.5 md:w-4 md:h-4 shrink-0" />
               <span>Contabilidad</span>
             </button>
           </div>
 
-          {/* Badge de Tasa Fija */}
-          <div className="bg-slate-800 border border-slate-700 rounded-xl px-2.5 py-1.5 flex items-center space-x-1.5 shadow-inner">
+          {/* Badge de Tasa Fija en Desktop (oculto en móvil para no duplicar) */}
+          <div className="hidden md:flex bg-slate-800 border border-slate-700 rounded-xl px-2.5 py-1.5 items-center space-x-1.5 shadow-inner">
             <Coins className="w-4 h-4 text-amber-400" />
             <div className="text-right">
               <span className="text-[9px] text-slate-400 block leading-none font-medium">Tasa Fija</span>
@@ -1073,6 +1269,33 @@ export default function App() {
       )}
 
       {/* ============================================================ */}
+      {/* BANNER DE SINCRONIZACIÓN OFFLINE                            */}
+      {/* ============================================================ */}
+      {offlineSalesQueue.length > 0 && (
+        <div className="max-w-6xl mx-auto w-full px-3 pt-3">
+          <div className="bg-amber-500 text-slate-950 px-4 py-2.5 rounded-2xl flex items-center justify-between gap-2 shadow-md font-medium text-xs sm:text-sm">
+            <div className="flex items-center gap-2">
+              <WifiOff className="w-4 h-4 shrink-0" />
+              <span>
+                <strong>{offlineSalesQueue.length} venta(s) guardada(s) localmente</strong> esperando conexión para sincronizar.
+              </span>
+            </div>
+            <button
+              onClick={syncOfflineSales}
+              disabled={syncingOffline || !isOnline}
+              className={`px-3 py-1.5 rounded-xl text-xs font-black shadow-sm shrink-0 transition-all ${
+                isOnline
+                  ? 'bg-slate-900 text-amber-400 hover:bg-slate-800'
+                  : 'bg-amber-600/50 text-slate-800 cursor-not-allowed'
+              }`}
+            >
+              {syncingOffline ? 'Sincronizando...' : isOnline ? 'Sincronizar Ahora' : 'Esperando Red'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================ */}
       {/* 2. VISTA A: PUNTO DE VENTA (POS)                             */}
       {/* ============================================================ */}
       {activeTab === 'pos' && (
@@ -1115,17 +1338,23 @@ export default function App() {
                         : 'border-slate-200 hover:border-slate-300'
                     }`}
                   >
-                    {/* Badge de Stock Bajo */}
-                    {isLowStock && (
-                      <div className="absolute top-2 left-2 z-10 bg-amber-500/90 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-sm">
-                        Stock: {product.stock}
+                    {/* Badge de Stock Bajo o Agotado */}
+                    {product.stock === 0 ? (
+                      <div className="absolute top-2 left-2 z-10 bg-rose-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-sm flex items-center gap-1">
+                        🚫 Agotado
                       </div>
-                    )}
+                    ) : isLowStock ? (
+                      <div className="absolute top-2 left-2 z-10 bg-amber-500 text-slate-950 text-[10px] font-black px-2 py-0.5 rounded-full shadow-sm flex items-center gap-1">
+                        ⚠️ Quedan {product.stock}
+                      </div>
+                    ) : null}
 
                     {/* Imagen y Click para sumar (Contenedor 1:1 Cuadrado Centrado) */}
                     <div
-                      onClick={() => updateQuantity(product.id, 1)}
-                      className="relative cursor-pointer aspect-square bg-slate-100 overflow-hidden group select-none flex items-center justify-center"
+                      onClick={() => product.stock > 0 && updateQuantity(product.id, 1)}
+                      className={`relative aspect-square bg-slate-100 overflow-hidden group select-none flex items-center justify-center ${
+                        product.stock === 0 ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+                      }`}
                     >
                       <img
                         src={product.image_url || 'https://images.unsplash.com/photo-1527842891421-42eec6e703ea?w=400'}
@@ -1133,11 +1362,19 @@ export default function App() {
                         className="w-full h-full object-cover object-center transition-transform duration-300 group-hover:scale-105"
                         loading="lazy"
                       />
-                      <div className="absolute inset-0 bg-black/10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                        <span className="bg-emerald-500 text-white p-2 rounded-full shadow-lg">
-                          <Plus className="w-5 h-5" />
-                        </span>
-                      </div>
+                      {product.stock > 0 ? (
+                        <div className="absolute inset-0 bg-black/10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                          <span className="bg-emerald-500 text-white p-2 rounded-full shadow-lg">
+                            <Plus className="w-5 h-5" />
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="absolute inset-0 bg-slate-950/40 flex items-center justify-center">
+                          <span className="bg-rose-600 text-white font-bold text-xs px-2.5 py-1 rounded-xl shadow">
+                            Agotado
+                          </span>
+                        </div>
+                      )}
 
                       {/* Badge contador actual */}
                       {isSelected && (
@@ -2557,8 +2794,19 @@ export default function App() {
             <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-3">
               <CheckCircle2 className="w-10 h-10" />
             </div>
-            <h2 className="text-xl font-black text-slate-800">¡Venta Concretada!</h2>
-            <p className="text-xs text-slate-400 font-mono mt-0.5">Ticket #{lastSaleData.saleNumber}</p>
+            <h2 className="text-xl font-black text-slate-800">
+              {lastSaleData.isOffline ? '¡Venta Guardada (Offline)!' : '¡Venta Concretada!'}
+            </h2>
+            <p className="text-xs text-slate-400 font-mono mt-0.5">
+              Ticket #{lastSaleData.saleNumber || lastSaleData.id}
+            </p>
+
+            {lastSaleData.isOffline && (
+              <div className="mt-2 bg-amber-50 border border-amber-200 text-amber-800 px-3 py-1.5 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1.5">
+                <WifiOff className="w-3.5 h-3.5 shrink-0" />
+                <span>Guardada en memoria local. Se sincronizará al volver la conexión.</span>
+              </div>
+            )}
 
             <div className="my-4 bg-slate-50 border border-slate-200 rounded-2xl p-4 text-left space-y-1.5 text-xs">
               <div className="flex justify-between">
