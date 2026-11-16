@@ -34,7 +34,10 @@ import {
   BarChart3,
   TrendingUp,
   Calendar,
-  ArrowUpRight
+  ArrowUpRight,
+  Lock,
+  Unlock,
+  KeyRound
 } from 'lucide-react';
 
 const PRESET_IMAGES = [
@@ -101,6 +104,14 @@ export default function App() {
   const [editingCategoryId, setEditingCategoryId] = useState(null);
   const [editingCategoryName, setEditingCategoryName] = useState('');
   const [savingCategory, setSavingCategory] = useState(false);
+
+  // Estados de Protección / PIN de Administración (2200)
+  const [isAdminUnlocked, setIsAdminUnlocked] = useState(() => sessionStorage.getItem('kiosco_admin_unlocked') === 'true');
+  const [showPinModal, setShowPinModal] = useState(false);
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState('');
+  const [pinLoading, setPinLoading] = useState(false);
+  const [pendingAdminAction, setPendingAdminAction] = useState(null);
 
   // Estados de Pago
   const [paymentMethods, setPaymentMethods] = useState({
@@ -577,8 +588,84 @@ export default function App() {
     }
   };
 
+  // Control de Acceso y Clave de Administrador (2200)
+  const handleRequestAdminAccess = (targetAction = 'inventory') => {
+    if (isAdminUnlocked) {
+      if (targetAction === 'inventory') setActiveTab('inventory');
+      else if (targetAction === 'add_product') handleOpenAddProduct();
+      else if (targetAction === 'category') setShowCategoryModal(true);
+      else if (typeof targetAction === 'function') targetAction();
+      return;
+    }
+    setPinInput('');
+    setPinError('');
+    setPendingAdminAction(() => targetAction);
+    setShowPinModal(true);
+  };
+
+  const handleVerifyPin = async (e) => {
+    if (e) e.preventDefault();
+    const pin = pinInput.trim();
+    if (!pin) {
+      setPinError('Ingrese la clave de 4 dígitos');
+      return;
+    }
+
+    try {
+      setPinLoading(true);
+      setPinError('');
+      const res = await fetch('/api/settings/verify-pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin })
+      });
+      const data = await res.json();
+      if (data.success && data.authorized) {
+        setIsAdminUnlocked(true);
+        sessionStorage.setItem('kiosco_admin_unlocked', 'true');
+        setShowPinModal(false);
+        setPinInput('');
+
+        if (pendingAdminAction === 'inventory') {
+          setActiveTab('inventory');
+        } else if (pendingAdminAction === 'add_product') {
+          handleOpenAddProduct();
+        } else if (pendingAdminAction === 'category') {
+          setShowCategoryModal(true);
+        } else if (typeof pendingAdminAction === 'function') {
+          pendingAdminAction();
+        }
+        setPendingAdminAction(null);
+      } else {
+        setPinError(data.error || 'Clave incorrecta');
+      }
+    } catch (err) {
+      if (pin === '2200') {
+        setIsAdminUnlocked(true);
+        sessionStorage.setItem('kiosco_admin_unlocked', 'true');
+        setShowPinModal(false);
+        setPinInput('');
+        if (pendingAdminAction === 'inventory') setActiveTab('inventory');
+      } else {
+        setPinError('Clave incorrecta');
+      }
+    } finally {
+      setPinLoading(false);
+    }
+  };
+
+  const handleLockAdmin = () => {
+    setIsAdminUnlocked(false);
+    sessionStorage.removeItem('kiosco_admin_unlocked');
+    setActiveTab('pos');
+  };
+
   // Abrir Modal de Producto (Nuevo o Editar)
   const handleOpenAddProduct = () => {
+    if (!isAdminUnlocked) {
+      handleRequestAdminAccess('add_product');
+      return;
+    }
     setEditingProduct(null);
     setProductForm({
       name: '',
@@ -591,6 +678,10 @@ export default function App() {
   };
 
   const handleOpenEditProduct = (prod) => {
+    if (!isAdminUnlocked) {
+      handleRequestAdminAccess(() => handleOpenEditProduct(prod));
+      return;
+    }
     setEditingProduct(prod);
     setProductForm({
       name: prod.name,
@@ -889,7 +980,7 @@ export default function App() {
               )}
             </button>
             <button
-              onClick={() => setActiveTab('inventory')}
+              onClick={() => handleRequestAdminAccess('inventory')}
               className={`px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs md:text-sm font-bold flex items-center gap-1.5 transition-all ${
                 activeTab === 'inventory'
                   ? 'bg-emerald-500 text-slate-950 shadow-sm'
@@ -898,6 +989,11 @@ export default function App() {
             >
               <Warehouse className="w-4 h-4" />
               <span>Almacén</span>
+              {isAdminUnlocked ? (
+                <Unlock className="w-3 h-3 text-emerald-300 ml-0.5" />
+              ) : (
+                <Lock className="w-3 h-3 text-slate-400 ml-0.5" />
+              )}
             </button>
             <button
               onClick={() => setActiveTab('accounting')}
@@ -1163,6 +1259,15 @@ export default function App() {
                 >
                   <Plus className="w-4 h-4 text-slate-950" />
                   <span>+ Agregar Producto</span>
+                </button>
+
+                <button
+                  onClick={handleLockAdmin}
+                  className="px-3 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded-xl text-xs flex items-center gap-1.5 border border-rose-200 transition-all active:scale-95 shadow-sm"
+                  title="Bloquear acceso de administrador"
+                >
+                  <Lock className="w-4 h-4 text-rose-600" />
+                  <span>Bloquear</span>
                 </button>
               </div>
             </div>
@@ -2816,6 +2921,130 @@ export default function App() {
                 Listo / Cerrar
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================ */}
+      {/* 10. MODAL DE CLAVE DE ADMINISTRADOR (PIN 2200)               */}
+      {/* ============================================================ */}
+      {showPinModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white w-full max-w-xs sm:max-w-sm rounded-3xl p-6 shadow-2xl border border-slate-200 text-center animate-in zoom-in-95 duration-200">
+            {/* Header Icon */}
+            <div className="w-14 h-14 bg-emerald-100 text-emerald-700 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-inner">
+              <KeyRound className="w-7 h-7 text-emerald-600" />
+            </div>
+
+            <h3 className="text-lg font-black text-slate-800">
+              Acceso de Administrador
+            </h3>
+            <p className="text-xs text-slate-500 mt-1 mb-4">
+              Ingresa la clave para gestionar productos e inventario.
+            </p>
+
+            <form onSubmit={handleVerifyPin}>
+              <div className="mb-4">
+                <input
+                  type="password"
+                  maxLength={6}
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={pinInput}
+                  onChange={(e) => {
+                    setPinInput(e.target.value);
+                    setPinError('');
+                  }}
+                  placeholder="••••"
+                  autoFocus
+                  className="w-full text-center text-3xl font-black font-mono tracking-widest py-3 px-4 bg-slate-100 border-2 border-slate-300 rounded-2xl focus:border-emerald-500 focus:bg-white focus:outline-none transition-all"
+                />
+                {pinError && (
+                  <p className="text-xs font-bold text-rose-600 mt-2 bg-rose-50 py-1.5 px-3 rounded-xl border border-rose-200 animate-in fade-in">
+                    {pinError}
+                  </p>
+                )}
+              </div>
+
+              {/* Teclado Numérico Táctil (Tablet / Teléfono) */}
+              <div className="grid grid-cols-3 gap-2 mb-4">
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
+                  <button
+                    key={num}
+                    type="button"
+                    onClick={() => {
+                      if (pinInput.length < 6) {
+                        setPinInput(prev => prev + num.toString());
+                        setPinError('');
+                      }
+                    }}
+                    className="py-3 bg-slate-100 hover:bg-slate-200 active:bg-emerald-500 active:text-white rounded-xl text-lg font-black text-slate-800 transition-all shadow-sm active:scale-95"
+                  >
+                    {num}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPinInput(prev => prev.slice(0, -1));
+                    setPinError('');
+                  }}
+                  className="py-3 bg-slate-200 hover:bg-slate-300 active:bg-slate-400 rounded-xl text-xs font-bold text-slate-700 transition-all shadow-sm active:scale-95"
+                >
+                  Borrar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (pinInput.length < 6) {
+                      setPinInput(prev => prev + '0');
+                      setPinError('');
+                    }
+                  }}
+                  className="py-3 bg-slate-100 hover:bg-slate-200 active:bg-emerald-500 active:text-white rounded-xl text-lg font-black text-slate-800 transition-all shadow-sm active:scale-95"
+                >
+                  0
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPinInput('');
+                    setPinError('');
+                  }}
+                  className="py-3 bg-rose-100 hover:bg-rose-200 active:bg-rose-300 rounded-xl text-xs font-bold text-rose-700 transition-all shadow-sm active:scale-95"
+                >
+                  C
+                </button>
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowPinModal(false);
+                    setPinInput('');
+                    setPinError('');
+                  }}
+                  className="flex-1 py-3 border border-slate-300 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 active:scale-95 transition-all"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={pinLoading || !pinInput}
+                  className="flex-1 py-3 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-emerald-500/20 active:scale-95 transition-all flex items-center justify-center gap-1.5"
+                >
+                  {pinLoading ? (
+                    <RefreshCw className="w-4 h-4 animate-spin text-slate-950" />
+                  ) : (
+                    <>
+                      <Unlock className="w-4 h-4" />
+                      <span>Ingresar</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

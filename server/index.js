@@ -1108,6 +1108,41 @@ app.get('/api/settings', async (req, res) => {
   }
 });
 
+app.post('/api/settings/verify-pin', async (req, res) => {
+  try {
+    const { pin } = req.body;
+    const dbRes = await db.query("SELECT value FROM settings WHERE key = 'admin_pin'");
+    const currentPin = dbRes.rows.length > 0 ? dbRes.rows[0].value : '2200';
+    if (pin && pin.toString().trim() === currentPin.toString().trim()) {
+      return res.json({ success: true, authorized: true });
+    }
+    return res.status(401).json({ success: false, authorized: false, error: 'Contraseña incorrecta' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.put('/api/settings/pin', async (req, res) => {
+  try {
+    const { current_pin, new_pin } = req.body;
+    const dbRes = await db.query("SELECT value FROM settings WHERE key = 'admin_pin'");
+    const savedPin = dbRes.rows.length > 0 ? dbRes.rows[0].value : '2200';
+    if (!current_pin || current_pin.toString().trim() !== savedPin.toString().trim()) {
+      return res.status(401).json({ success: false, error: 'Contraseña actual incorrecta' });
+    }
+    if (!new_pin || new_pin.toString().trim().length < 4) {
+      return res.status(400).json({ success: false, error: 'La nueva contraseña debe tener al menos 4 dígitos' });
+    }
+    await db.query(
+      "INSERT INTO settings (key, value) VALUES ('admin_pin', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
+      [new_pin.toString().trim()]
+    );
+    res.json({ success: true, message: 'Contraseña actualizada exitosamente' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.put('/api/settings/rate', async (req, res) => {
   try {
     const { rate } = req.body;

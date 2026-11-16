@@ -102,7 +102,7 @@ async function initDatabase() {
       INSERT INTO settings (key, value)
       VALUES 
         ('exchange_rate', '1000'),
-        ('admin_pin', '1234')
+        ('admin_pin', '2200')
       ON CONFLICT (key) DO NOTHING;
     `);
 
