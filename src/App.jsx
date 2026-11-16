@@ -39,7 +39,9 @@ import {
   Unlock,
   KeyRound,
   Wifi,
-  WifiOff
+  WifiOff,
+  ArrowUp,
+  ArrowDownAZ
 } from 'lucide-react';
 
 const PRESET_IMAGES = [
@@ -179,6 +181,14 @@ export default function App() {
     }
   });
   const [syncingOffline, setSyncingOffline] = useState(false);
+
+  // Estados de Navegación, Header Inteligente y Scroll
+  const [showScrollTop, setShowScrollTop] = useState(false);
+  const [showHeader, setShowHeader] = useState(true);
+
+  // Estados de Ordenamiento y Destacado en Almacén
+  const [warehouseSortOrder, setWarehouseSortOrder] = useState('recent'); // 'recent' | 'alpha'
+  const [highlightedProductId, setHighlightedProductId] = useState(null);
 
   // Toast Helper
   const showToast = (msg) => {
@@ -422,6 +432,41 @@ export default function App() {
     }
   }, [activeTab, accountingPeriod]);
 
+  // Control de scroll para botón flotante "Subir" y barra superior inteligente (auto-hide en scroll down, show en scroll up)
+  useEffect(() => {
+    let prevScroll = window.scrollY;
+    const handleScroll = () => {
+      const currentScroll = window.scrollY;
+
+      // Mostrar botón flotante de subir si el scroll supera los 250px
+      if (currentScroll > 250) {
+        setShowScrollTop(true);
+      } else {
+        setShowScrollTop(false);
+      }
+
+      // Barra superior inteligente: siempre visible cerca del tope superior
+      if (currentScroll <= 30) {
+        setShowHeader(true);
+      } else if (currentScroll > prevScroll && currentScroll > 80) {
+        // Haciendo scroll hacia abajo: ocultar suavemente
+        setShowHeader(false);
+      } else if (currentScroll < prevScroll) {
+        // Haciendo scroll hacia arriba: desplegar inmediatamente
+        setShowHeader(true);
+      }
+
+      prevScroll = currentScroll;
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const scrollToTop = () => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   // Productos vendidos filtrados en contabilidad
   const filteredAccountingProducts = useMemo(() => {
     if (!accountingData?.productsSold) return [];
@@ -449,6 +494,17 @@ export default function App() {
       return matchesSearch && matchesCategory;
     });
   }, [products, searchQuery, selectedCategory]);
+
+  // Productos de Almacén ordenados según selección (Recientes primero o Alfabético A-Z)
+  const warehouseProducts = useMemo(() => {
+    if (warehouseSortOrder === 'alpha') {
+      return [...filteredProducts].sort((a, b) =>
+        a.name.localeCompare(b.name, 'es', { sensitivity: 'base' })
+      );
+    }
+    // Por defecto 'recent': mantiene el orden del backend (COALESCE(updated_at, created_at) DESC)
+    return filteredProducts;
+  }, [filteredProducts, warehouseSortOrder]);
 
   // Estadísticas del Almacén
   const warehouseStats = useMemo(() => {
@@ -1000,11 +1056,17 @@ export default function App() {
 
       const data = await res.json();
       if (data.success) {
+        const savedId = editingProduct ? editingProduct.id : (data.product?.id || null);
+        if (savedId) {
+          setHighlightedProductId(savedId);
+          setTimeout(() => setHighlightedProductId(null), 8000);
+        }
+        setWarehouseSortOrder('recent'); // Colocar en primer lugar de la lista
         setShowProductModal(false);
         showToast(
           editingProduct
-            ? ` ${productForm.name} actualizado y sincronizado en GitHub`
-            : ` ${productForm.name} agregado y respaldado en GitHub`
+            ? `✅ ${productForm.name} actualizado y colocado al inicio del Almacén`
+            : `✅ ${productForm.name} agregado y colocado al inicio del Almacén`
         );
         loadProducts(); // Actualización inmediata en tiempo real
       } else {
@@ -1227,7 +1289,9 @@ export default function App() {
       {/* ============================================================ */}
       {/* 1. ENCABEZADO SUPERIOR LIMPIO Y PROFESIONAL                 */}
       {/* ============================================================ */}
-      <header className="sticky top-0 z-30 bg-slate-900 text-white shadow-lg px-3 sm:px-4 py-2.5 sm:py-3 border-b border-slate-800">
+      <header className={`sticky top-0 z-30 bg-slate-900 text-white shadow-lg px-3 sm:px-4 py-2.5 sm:py-3 border-b border-slate-800 transition-transform duration-300 ease-in-out ${
+        showHeader ? 'translate-y-0' : '-translate-y-full'
+      }`}>
         <div className="max-w-6xl mx-auto flex flex-col md:flex-row md:items-center md:justify-between gap-2 sm:gap-3">
           {/* Fila 1 en móvil / Izquierda en desktop: Logo, Pill de Conexión y Tasa Fija (en móvil) */}
           <div className="flex items-center justify-between md:justify-start gap-2 sm:gap-3 w-full md:w-auto">
@@ -1570,6 +1634,19 @@ export default function App() {
               {/* Botones de Acción de Almacén */}
               <div className="flex flex-wrap items-center gap-2">
                 <button
+                  onClick={() => setWarehouseSortOrder(prev => prev === 'alpha' ? 'recent' : 'alpha')}
+                  className={`px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition-all active:scale-95 shadow-sm ${
+                    warehouseSortOrder === 'alpha'
+                      ? 'bg-emerald-500 text-slate-950 border-emerald-400 font-black'
+                      : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+                  }`}
+                  title={warehouseSortOrder === 'alpha' ? 'Orden alfabético A-Z activado. Clic para ordenar por recientes' : 'Orden por recientes activado. Clic para ordenar alfabéticamente A-Z'}
+                >
+                  <ArrowDownAZ className={`w-4 h-4 ${warehouseSortOrder === 'alpha' ? 'text-slate-950' : 'text-emerald-400'}`} />
+                  <span>{warehouseSortOrder === 'alpha' ? 'Orden: A-Z' : 'Orden: Recientes'}</span>
+                </button>
+
+                <button
                   onClick={() => setShowCategoryModal(true)}
                   className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-xl text-xs flex items-center gap-1.5 border border-slate-700 transition-all active:scale-95 shadow-sm"
                   title="Crear y editar categorías de productos"
@@ -1640,19 +1717,24 @@ export default function App() {
               <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-2 text-emerald-500" />
               <p className="text-xs">Cargando inventario...</p>
             </div>
-          ) : filteredProducts.length === 0 ? (
+          ) : warehouseProducts.length === 0 ? (
             <div className="bg-white rounded-3xl p-8 text-center border border-slate-200">
               <Package className="w-10 h-10 text-slate-300 mx-auto mb-2" />
               <p className="text-sm font-bold text-slate-700">No hay productos en esta búsqueda</p>
             </div>
           ) : (
             <div className="space-y-2.5">
-              {filteredProducts.map(product => {
+              {warehouseProducts.map(product => {
                 const isLow = product.stock <= 5;
+                const isHighlighted = product.id === highlightedProductId;
                 return (
                   <div
                     key={product.id}
-                    className="bg-white rounded-2xl p-3 sm:p-4 border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 transition-all hover:border-slate-300"
+                    className={`bg-white rounded-2xl p-3 sm:p-4 border shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 transition-all ${
+                      isHighlighted
+                        ? 'border-emerald-500 ring-2 ring-emerald-500/30 bg-emerald-50/20'
+                        : 'border-slate-200 hover:border-slate-300'
+                    }`}
                   >
                     {/* Imagen 1:1 Cuadrada Centrada e Info */}
                     <div className="flex items-center gap-3 w-full sm:w-auto">
@@ -1668,6 +1750,11 @@ export default function App() {
                           <span className="text-[10px] bg-slate-100 text-slate-600 font-bold px-2 py-0.5 rounded-md uppercase">
                             {product.category}
                           </span>
+                          {isHighlighted && (
+                            <span className="text-[10px] bg-emerald-500 text-slate-950 font-black px-2 py-0.5 rounded-md animate-pulse">
+                              ¡Recién editado!
+                            </span>
+                          )}
                           {isLow && (
                             <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-md">
                               Bajo stock
@@ -3833,6 +3920,22 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Botón flotante para subir rápidamente al inicio de la página */}
+      <button
+        onClick={scrollToTop}
+        aria-label="Subir al inicio"
+        className={`fixed right-4 z-40 p-3 rounded-full bg-slate-900/90 hover:bg-slate-900 text-emerald-400 hover:text-emerald-300 border border-slate-700/80 shadow-2xl backdrop-blur-md transition-all duration-300 active:scale-90 flex items-center justify-center ${
+          activeTab === 'pos' ? 'bottom-28 md:bottom-24' : 'bottom-6 sm:bottom-8'
+        } ${
+          showScrollTop
+            ? 'opacity-100 translate-y-0 pointer-events-auto'
+            : 'opacity-0 translate-y-4 pointer-events-none'
+        }`}
+        title="Subir al inicio"
+      >
+        <ArrowUp className="w-5 h-5 stroke-[2.5]" />
+      </button>
     </div>
   );
 }

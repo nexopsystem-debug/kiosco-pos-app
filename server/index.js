@@ -224,7 +224,7 @@ app.get('/api/products', async (req, res) => {
   try {
     const rate = await getExchangeRate();
     const result = await db.query(
-      'SELECT id, name, category, price_usd, stock, image_url, is_active FROM products WHERE is_active = true ORDER BY id ASC'
+      'SELECT id, name, category, price_usd, stock, image_url, is_active, created_at, updated_at FROM products WHERE is_active = true ORDER BY COALESCE(updated_at, created_at) DESC, id DESC'
     );
     const products = result.rows.map(p => ({
       ...p,
@@ -243,7 +243,7 @@ app.get('/api/products/all', async (req, res) => {
   try {
     const rate = await getExchangeRate();
     const result = await db.query(
-      'SELECT id, name, category, price_usd, stock, image_url, is_active FROM products ORDER BY id ASC'
+      'SELECT id, name, category, price_usd, stock, image_url, is_active, created_at, updated_at FROM products ORDER BY COALESCE(updated_at, created_at) DESC, id DESC'
     );
     const products = result.rows.map(p => ({
       ...p,
@@ -265,8 +265,8 @@ app.post('/api/products', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Nombre y precio son requeridos' });
     }
     const result = await db.query(
-      `INSERT INTO products (name, category, price_usd, stock, image_url, is_active)
-       VALUES ($1, $2, $3, $4, $5, true) RETURNING *`,
+      `INSERT INTO products (name, category, price_usd, stock, image_url, is_active, updated_at)
+       VALUES ($1, $2, $3, $4, $5, true, CURRENT_TIMESTAMP) RETURNING *`,
       [
         name.trim(),
         category ? category.trim() : 'Varios',
@@ -304,7 +304,8 @@ app.put('/api/products/:id', async (req, res) => {
            price_usd = COALESCE($3, price_usd),
            stock = COALESCE($4, stock),
            image_url = COALESCE($5, image_url),
-           is_active = COALESCE($6, is_active)
+           is_active = COALESCE($6, is_active),
+           updated_at = CURRENT_TIMESTAMP
        WHERE id = $7 RETURNING *`,
       [
         name !== undefined ? name.trim() : null,
