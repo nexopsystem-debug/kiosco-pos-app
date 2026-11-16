@@ -130,6 +130,91 @@ async function syncProductsToGithub() {
   }
 }
 
+// --- Helper para sincronizar categorías con GitHub ---
+async function syncCategoriesToGithub() {
+  const token = process.env.GITHUB_TOKEN;
+  const repo = process.env.GITHUB_REPO || 'nexopsystem-debug/kiosco-pos-app';
+
+  try {
+    const result = await db.query(
+      'SELECT id, name, created_at FROM categories ORDER BY name ASC'
+    );
+    const categories = result.rows;
+    const contentStr = JSON.stringify(categories, null, 2);
+
+    // Guardar localmente
+    try {
+      const localDir = path.join(__dirname, '../data');
+      if (!fs.existsSync(localDir)) {
+        fs.mkdirSync(localDir, { recursive: true });
+      }
+      fs.writeFileSync(path.join(localDir, 'categories.json'), contentStr, 'utf8');
+    } catch (fsErr) {
+      console.warn('⚠️ No se pudo escribir localmente en data/categories.json:', fsErr.message);
+    }
+
+    if (!token) {
+      return { success: false, skipped: true, message: 'GITHUB_TOKEN no configurado' };
+    }
+
+    const filePath = 'data/categories.json';
+    const apiUrl = `https://api.github.com/repos/${repo}/contents/${filePath}`;
+    let currentSha = null;
+
+    try {
+      const getRes = await fetch(apiUrl, {
+        headers: {
+          'Authorization': `token ${token}`,
+          'User-Agent': 'Kiosco-POS-App',
+          'Accept': 'application/vnd.github.v3+json'
+        }
+      });
+      if (getRes.ok) {
+        const fileData = await getRes.json();
+        currentSha = fileData.sha;
+      }
+    } catch (checkErr) {
+      // Archivo nuevo
+    }
+
+    const payload = {
+      message: `chore(categories): sincronizar categorías (${categories.length} categorías) [skip ci]`,
+      content: Buffer.from(contentStr, 'utf8').toString('base64'),
+      branch: 'main'
+    };
+    if (currentSha) {
+      payload.sha = currentSha;
+    }
+
+    const putRes = await fetch(apiUrl, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `token ${token}`,
+        'User-Agent': 'Kiosco-POS-App',
+        'Content-Type': 'application/json',
+        'Accept': 'application/vnd.github.v3+json'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (putRes.ok) {
+      const resData = await putRes.json();
+      return {
+        success: true,
+        count: categories.length,
+        commitUrl: resData.commit?.html_url,
+        sha: resData.commit?.sha
+      };
+    } else {
+      const errText = await putRes.text();
+      return { success: false, error: errText };
+    }
+  } catch (err) {
+    console.error('⚠️ Excepción en syncCategoriesToGithub:', err.message);
+    return { success: false, error: err.message };
+  }
+}
+
 // ==========================================
 // 1. ENDPOINTS DE PRODUCTOS
 // ==========================================
@@ -269,8 +354,134 @@ app.delete('/api/products/:id', async (req, res) => {
 // Disparar sincronización manual con GitHub ("Actualizar Productos")
 app.post('/api/products/sync-github', async (req, res) => {
   try {
-    const syncResult = await syncProductsToGithub();
-    res.json(syncResult);
+    const [syncResult, syncCategoriesResult] = await Promise.all([
+      syncProductsToGithub(),
+      syncCategoriesToGithub()
+    ]);
+    res.json({
+      ...syncResult,
+      categoriesCount: syncCategoriesResult.count
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==========================================
+// 2. ENDPOINTS DE CATEGORÍAS
+// ==========================================
+
+// Listar categorías con conteo de productos asociados
+app.get('/api/categories', async (req, res) => {
+  try {
+    const result = await db.query(`
+      SELECT c.id, c.name, COUNT(p.id)::int AS product_count
+      FROM categories c
+      LEFT JOIN products p ON LOWER(p.category) = LOWER(c.name) AND p.is_active = true
+      GROUP BY c.id, c.name
+      ORDER BY c.name ASC
+    `);
+    res.json({ success: true, categories: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Crear nueva categoría
+app.post('/api/categories', async (req, res) => {
+  try {
+    const { name } = req.body;
+    const cleanName = (name || '').trim();
+    if (!cleanName) {
+      return res.status(400).json({ success: false, error: 'El nombre de la categoría es obligatorio' });
+    }
+
+    const result = await db.query(
+      `INSERT INTO categories (name) 
+       VALUES ($1) 
+       ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name 
+       RETURNING id, name`,
+      [cleanName]
+    );
+
+    const category = result.rows[0];
+
+    // Sincronizar con GitHub en segundo plano
+    syncCategoriesToGithub().catch(e => console.warn('Sync categories error:', e.message));
+
+    res.json({ success: true, category });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Modificar / Renombrar categoría existente
+app.put('/api/categories/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name } = req.body;
+    const newName = (name || '').trim();
+
+    if (!newName) {
+      return res.status(400).json({ success: false, error: 'El nombre de la categoría no puede estar vacío' });
+    }
+
+    // Obtener nombre actual
+    const currentRes = await db.query('SELECT name FROM categories WHERE id = $1', [id]);
+    if (currentRes.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Categoría no encontrada' });
+    }
+    const oldName = currentRes.rows[0].name;
+
+    // Actualizar nombre en tabla de categorías
+    const updateRes = await db.query(
+      'UPDATE categories SET name = $1 WHERE id = $2 RETURNING id, name',
+      [newName, id]
+    );
+
+    // Actualizar automáticamente todos los productos que tenían la categoría anterior
+    await db.query(
+      'UPDATE products SET category = $1 WHERE LOWER(category) = LOWER($2)',
+      [newName, oldName]
+    );
+
+    // Sincronizar catálogo y categorías con GitHub en segundo plano
+    syncCategoriesToGithub().catch(e => console.warn('Sync error:', e.message));
+    syncProductsToGithub().catch(e => console.warn('Sync error:', e.message));
+
+    res.json({
+      success: true,
+      category: updateRes.rows[0],
+      oldName,
+      newName
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Eliminar categoría
+app.delete('/api/categories/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const currentRes = await db.query('SELECT name FROM categories WHERE id = $1', [id]);
+    if (currentRes.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Categoría no encontrada' });
+    }
+    const catName = currentRes.rows[0].name;
+
+    // Reasignar productos de esta categoría a 'Varios'
+    await db.query("UPDATE products SET category = 'Varios' WHERE LOWER(category) = LOWER($1)", [catName]);
+
+    // Eliminar la categoría
+    await db.query('DELETE FROM categories WHERE id = $1', [id]);
+
+    // Sincronizar con GitHub en segundo plano
+    syncCategoriesToGithub().catch(e => console.warn('Sync error:', e.message));
+    syncProductsToGithub().catch(e => console.warn('Sync error:', e.message));
+
+    res.json({ success: true, message: `Categoría "${catName}" eliminada y sus productos reasignados a "Varios"` });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

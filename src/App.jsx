@@ -89,6 +89,15 @@ export default function App() {
   const [recentImages, setRecentImages] = useState([]);
   const [uploadingImage, setUploadingImage] = useState(false);
 
+  // Estados de Gestión de Categorías
+  const [categoriesList, setCategoriesList] = useState([]);
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [creatingCategory, setCreatingCategory] = useState(false);
+  const [editingCategoryId, setEditingCategoryId] = useState(null);
+  const [editingCategoryName, setEditingCategoryName] = useState('');
+  const [savingCategory, setSavingCategory] = useState(false);
+
   // Estados de Pago
   const [paymentMethods, setPaymentMethods] = useState({
     divisas: { selected: true, amountUsd: '', amountBs: '' },
@@ -144,16 +153,32 @@ export default function App() {
     }
   };
 
+  // Cargar categorías desde la base de datos
+  const loadCategories = async () => {
+    try {
+      const res = await fetch('/api/categories');
+      const data = await res.json();
+      if (data.success && Array.isArray(data.categories)) {
+        setCategoriesList(data.categories);
+      }
+    } catch (err) {
+      console.warn('Error al cargar categorías:', err);
+    }
+  };
+
   useEffect(() => {
     loadProducts();
     loadRecentImages();
+    loadCategories();
   }, []);
 
-  // Categorías dinámicas
+  // Categorías dinámicas unificadas para filtros
   const categories = useMemo(() => {
-    const cats = new Set(products.map(p => p.category || 'Varios'));
-    return ['Todos', ...Array.from(cats)];
-  }, [products]);
+    const fromList = categoriesList.map(c => c.name);
+    const fromProds = products.map(p => p.category || 'Varios');
+    const combined = Array.from(new Set([...fromList, ...fromProds])).filter(Boolean);
+    return ['Todos', ...combined];
+  }, [categoriesList, products]);
 
   // Productos filtrados
   const filteredProducts = useMemo(() => {
@@ -526,11 +551,12 @@ export default function App() {
       const [syncRes] = await Promise.all([
         fetch('/api/products/sync-github', { method: 'POST' }),
         loadRecentImages(),
-        loadProducts()
+        loadProducts(),
+        loadCategories()
       ]);
       const data = await syncRes.json();
       if (data.success) {
-        showToast(`✅ Catálogo e imágenes actualizados en GitHub (${data.count} productos)`);
+        showToast(`✅ Catálogo, categorías e imágenes sincronizados en GitHub (${data.count} productos)`);
       } else {
         showToast(`ℹ️ ${data.message || 'Catálogo actualizado'}`);
       }
@@ -538,6 +564,85 @@ export default function App() {
       showToast('⚠️ Error al actualizar productos');
     } finally {
       setSyncingGithub(false);
+    }
+  };
+
+  // Crear nueva categoría
+  const handleCreateCategory = async (e) => {
+    if (e) e.preventDefault();
+    const name = newCategoryName.trim();
+    if (!name) return;
+
+    try {
+      setCreatingCategory(true);
+      const res = await fetch('/api/categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(`🏷️ Categoría "${name}" creada exitosamente`);
+        setNewCategoryName('');
+        await loadCategories();
+      } else {
+        alert('Error: ' + (data.error || 'No se pudo crear la categoría'));
+      }
+    } catch (err) {
+      alert('Error de conexión al crear categoría');
+    } finally {
+      setCreatingCategory(false);
+    }
+  };
+
+  // Guardar edición de categoría (renombrar)
+  const handleUpdateCategory = async (id) => {
+    const name = editingCategoryName.trim();
+    if (!name) return;
+
+    try {
+      setSavingCategory(true);
+      const res = await fetch(`/api/categories/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(`✏️ Categoría actualizada a "${name}" y productos sincronizados`);
+        setEditingCategoryId(null);
+        setEditingCategoryName('');
+        await Promise.all([loadCategories(), loadProducts()]);
+      } else {
+        alert('Error: ' + (data.error || 'No se pudo actualizar la categoría'));
+      }
+    } catch (err) {
+      alert('Error de conexión al actualizar categoría');
+    } finally {
+      setSavingCategory(false);
+    }
+  };
+
+  // Eliminar categoría
+  const handleDeleteCategory = async (cat) => {
+    const count = cat.product_count || 0;
+    const msg = count > 0
+      ? `¿Eliminar la categoría "${cat.name}"? Los ${count} productos asociados pasarán a la categoría "Varios".`
+      : `¿Eliminar la categoría "${cat.name}"?`;
+
+    if (window.confirm(msg)) {
+      try {
+        const res = await fetch(`/api/categories/${cat.id}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (data.success) {
+          showToast(`🗑️ Categoría "${cat.name}" eliminada`);
+          await Promise.all([loadCategories(), loadProducts()]);
+        } else {
+          alert('Error: ' + (data.error || 'No se pudo eliminar la categoría'));
+        }
+      } catch (err) {
+        alert('Error de conexión al eliminar categoría');
+      }
     }
   };
 
@@ -808,7 +913,16 @@ export default function App() {
               </div>
 
               {/* Botones de Acción de Almacén */}
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => setShowCategoryModal(true)}
+                  className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-xl text-xs flex items-center gap-1.5 border border-slate-700 transition-all active:scale-95 shadow-sm"
+                  title="Crear y editar categorías de productos"
+                >
+                  <Tag className="w-4 h-4 text-emerald-400" />
+                  <span>Categorías</span>
+                </button>
+
                 <button
                   onClick={handleManualSyncGithub}
                   disabled={syncingGithub}
@@ -1124,20 +1238,29 @@ export default function App() {
                   className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2 text-sm font-semibold focus:ring-2 focus:ring-emerald-500 focus:bg-white focus:outline-none"
                 />
                 <div className="flex flex-wrap gap-1.5 mt-1.5">
-                  {COMMON_CATEGORIES.map(cat => (
+                  {(categoriesList.length > 0 ? categoriesList.map(c => c.name) : COMMON_CATEGORIES).map(cat => (
                     <button
                       type="button"
                       key={cat}
                       onClick={() => setProductForm({ ...productForm, category: cat })}
-                      className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border transition-all ${
+                      className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border transition-all ${
                         productForm.category === cat
-                          ? 'bg-slate-800 text-white border-slate-800'
+                          ? 'bg-slate-800 text-white border-slate-800 shadow-sm'
                           : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
                       }`}
                     >
                       {cat}
                     </button>
                   ))}
+                  <button
+                    type="button"
+                    onClick={() => setShowCategoryModal(true)}
+                    className="text-[10px] font-bold px-2.5 py-1 rounded-lg border border-dashed border-emerald-500 text-emerald-700 bg-emerald-50/50 hover:bg-emerald-100 transition-all flex items-center gap-1"
+                    title="Crear o editar categorías"
+                  >
+                    <Plus className="w-3 h-3 text-emerald-600" />
+                    <span>Gestionar</span>
+                  </button>
                 </div>
               </div>
 
@@ -1700,6 +1823,187 @@ export default function App() {
                 </button>
               </div>
             ) : null}
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================ */}
+      {/* 9. MODAL DE GESTIÓN DE CATEGORÍAS (CREAR Y EDITAR)           */}
+      {/* ============================================================ */}
+      {showCategoryModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in">
+          <div className="bg-white w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl max-h-[92vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden">
+            {/* Modal Header */}
+            <div className="bg-slate-900 text-white px-5 py-4 flex items-center justify-between border-b border-slate-800 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-emerald-500/20 rounded-xl border border-emerald-500/30">
+                  <Tag className="w-5 h-5 text-emerald-400" />
+                </div>
+                <div>
+                  <h3 className="font-black text-base sm:text-lg text-white">
+                    Gestión de Categorías
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Crea y edita las categorías del kiosco en tiempo real
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowCategoryModal(false);
+                  setEditingCategoryId(null);
+                }}
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 overflow-y-auto space-y-4 flex-1">
+              {/* Formulario Crear Nueva Categoría */}
+              <form onSubmit={handleCreateCategory} className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200">
+                <label className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block mb-1.5">
+                  Nueva Categoría
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Ej: Helados, Víveres, Enlatados..."
+                    value={newCategoryName}
+                    onChange={e => setNewCategoryName(e.target.value)}
+                    className="flex-1 bg-white border border-slate-300 rounded-xl px-3.5 py-2 text-xs sm:text-sm font-semibold focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  />
+                  <button
+                    type="submit"
+                    disabled={creatingCategory || !newCategoryName.trim()}
+                    className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 font-black rounded-xl text-xs sm:text-sm flex items-center gap-1.5 transition-all shadow-sm shrink-0 active:scale-95"
+                  >
+                    {creatingCategory ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Plus className="w-3.5 h-3.5" />
+                    )}
+                    <span>Crear</span>
+                  </button>
+                </div>
+              </form>
+
+              {/* Lista de Categorías Existentes */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Categorías ({categoriesList.length})
+                  </span>
+                  <span className="text-[10px] text-slate-400">
+                    Al editar el nombre se actualizan todos sus productos
+                  </span>
+                </div>
+
+                <div className="space-y-2 max-h-[46vh] overflow-y-auto pr-1">
+                  {categoriesList.length === 0 ? (
+                    <div className="text-center py-6 text-slate-400 text-xs">
+                      No hay categorías registradas.
+                    </div>
+                  ) : (
+                    categoriesList.map(cat => (
+                      <div
+                        key={cat.id}
+                        className="flex items-center justify-between p-3 rounded-2xl border border-slate-200 bg-white hover:border-slate-300 transition-all gap-2"
+                      >
+                        {editingCategoryId === cat.id ? (
+                          // Modo Edición
+                          <div className="flex items-center gap-2 flex-1">
+                            <input
+                              type="text"
+                              value={editingCategoryName}
+                              onChange={e => setEditingCategoryName(e.target.value)}
+                              className="flex-1 bg-slate-50 border border-emerald-500 rounded-xl px-3 py-1.5 text-xs sm:text-sm font-bold focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                              autoFocus
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateCategory(cat.id)}
+                              disabled={savingCategory || !editingCategoryName.trim()}
+                              className="p-2 bg-emerald-500 text-slate-950 rounded-xl text-xs font-bold hover:bg-emerald-400 transition-all active:scale-95 shadow-sm shrink-0"
+                              title="Guardar nombre"
+                            >
+                              <Check className="w-4 h-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingCategoryId(null);
+                                setEditingCategoryName('');
+                              }}
+                              className="p-2 bg-slate-200 text-slate-700 rounded-xl text-xs font-bold hover:bg-slate-300 transition-all shrink-0"
+                              title="Cancelar"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ) : (
+                          // Modo Lectura
+                          <>
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <span className="w-8 h-8 rounded-xl bg-slate-100 flex items-center justify-center text-slate-600 font-bold text-xs shrink-0">
+                                <Tag className="w-4 h-4 text-emerald-600" />
+                              </span>
+                              <div className="min-w-0">
+                                <span className="text-xs sm:text-sm font-bold text-slate-800 truncate block">
+                                  {cat.name}
+                                </span>
+                                <span className="text-[10px] text-slate-400 block font-medium">
+                                  {cat.product_count || 0} {(cat.product_count === 1) ? 'producto' : 'productos'}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingCategoryId(cat.id);
+                                  setEditingCategoryName(cat.name);
+                                }}
+                                className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center gap-1 transition-all active:scale-95"
+                                title="Editar nombre de categoría"
+                              >
+                                <Edit className="w-3.5 h-3.5 text-slate-600" />
+                                <span className="hidden sm:inline">Editar</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteCategory(cat)}
+                                className="p-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl text-xs font-bold transition-all active:scale-95"
+                                title="Eliminar categoría"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-end shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCategoryModal(false);
+                  setEditingCategoryId(null);
+                }}
+                className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs sm:text-sm font-bold transition-all active:scale-95"
+              >
+                Listo / Cerrar
+              </button>
+            </div>
           </div>
         </div>
       )}

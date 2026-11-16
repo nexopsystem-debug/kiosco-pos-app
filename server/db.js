@@ -27,6 +27,29 @@ async function initDatabase() {
       );
     `);
 
+    // Tabla de Categorías
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS categories (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(100) UNIQUE NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Categorías iniciales por defecto
+    await client.query(`
+      INSERT INTO categories (name) VALUES 
+        ('Bebidas'), ('Snacks'), ('Golosinas'), ('Víveres'), ('Cigarros'), ('Varios')
+      ON CONFLICT (name) DO NOTHING;
+    `);
+
+    // Sincronizar cualquier categoría existente en la tabla de productos
+    await client.query(`
+      INSERT INTO categories (name)
+      SELECT DISTINCT category FROM products WHERE category IS NOT NULL AND TRIM(category) != ''
+      ON CONFLICT (name) DO NOTHING;
+    `);
+
     // Tabla de Ventas
     await client.query(`
       CREATE TABLE IF NOT EXISTS sales (
