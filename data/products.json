@@ -36,15 +36,6 @@
     "is_active": true
   },
   {
-    "id": 7,
-    "name": "Papas Ruffles Original",
-    "category": "Snacks",
-    "price_usd": 1.5,
-    "stock": 12,
-    "image_url": "https://images.unsplash.com/photo-1527842891421-42eec6e703ea?w=500&auto=format&fit=crop&q=80",
-    "is_active": true
-  },
-  {
     "id": 8,
     "name": "Pirulin Lata 300g",
     "category": "Golosinas",
