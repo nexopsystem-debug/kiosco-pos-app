@@ -975,6 +975,27 @@ app.get('/api/reports/accounting', async (req, res) => {
       }
       endTime = `${todayStr} ${timeStr}-04`;
       periodLabel = `Turno Extendido (18:00 hasta ${timeStr.slice(0, 5)})`;
+    } else if (period === 'yesterday') {
+      const yesterday = new Date(vzla.getTime() - 24 * 3600000);
+      const yStr = formatDate(yesterday);
+      startTime = `${yStr} 00:00:00-04`;
+      endTime = `${yStr} 23:59:59-04`;
+      periodLabel = `Ayer (${yStr})`;
+    } else if (period === 'week') {
+      const wStart = new Date(vzla.getTime() - 6 * 24 * 3600000);
+      const wStr = formatDate(wStart);
+      startTime = `${wStr} 00:00:00-04`;
+      endTime = `${todayStr} 23:59:59-04`;
+      periodLabel = `Esta Semana (${wStr} al ${todayStr})`;
+    } else if (period === 'month') {
+      const mStr = `${vzla.getFullYear()}-${String(vzla.getMonth() + 1).padStart(2, '0')}-01`;
+      startTime = `${mStr} 00:00:00-04`;
+      endTime = `${todayStr} 23:59:59-04`;
+      periodLabel = `Este Mes (${mStr} al ${todayStr})`;
+    } else if (period === 'custom' && req.query.date) {
+      startTime = `${req.query.date} 00:00:00-04`;
+      endTime = `${req.query.date} 23:59:59-04`;
+      periodLabel = `Fecha: ${req.query.date}`;
     } else if (period === 'all') {
       startTime = '2020-01-01 00:00:00-04';
       endTime = `${todayStr} 23:59:59-04`;
@@ -1156,6 +1177,281 @@ app.post('/api/reports/request-telegram', async (req, res) => {
       message: 'Reporte procesado exitosamente',
       webhookSent,
       data: payload
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==========================================
+// 4.1 CIERRE OFICIAL DE JORNADA / CAJA
+// ==========================================
+
+// Previsualización de los datos que se consolidarán en el cierre de hoy
+app.get('/api/reports/daily-closing/preview', async (req, res) => {
+  try {
+    const vzla = getVenezuelaTime();
+    const todayStr = formatDate(vzla);
+    const timeStr = formatTime(vzla);
+
+    const shift1Start = `${todayStr} 08:00:00-04`;
+    const shift1End = `${todayStr} 17:30:00-04`;
+    const shift2Start = `${todayStr} 18:00:00-04`;
+    const shift2End = `${todayStr} 22:00:00-04`;
+    const dayStart = `${todayStr} 00:00:00-04`;
+    const dayEnd = `${todayStr} 23:59:59-04`;
+
+    // Turno 1
+    const s1 = await db.query(
+      `SELECT COUNT(*) as count, COALESCE(SUM(total_usd), 0) as usd, COALESCE(SUM(total_bs), 0) as bs
+       FROM sales WHERE created_at >= $1::timestamptz AND created_at <= $2::timestamptz`,
+      [shift1Start, shift1End]
+    );
+
+    // Turno 2
+    const s2 = await db.query(
+      `SELECT COUNT(*) as count, COALESCE(SUM(total_usd), 0) as usd, COALESCE(SUM(total_bs), 0) as bs
+       FROM sales WHERE created_at >= $1::timestamptz AND created_at <= $2::timestamptz`,
+      [shift2Start, shift2End]
+    );
+
+    // Día Completo
+    const dayTot = await db.query(
+      `SELECT COUNT(*) as count, COALESCE(SUM(total_usd), 0) as usd, COALESCE(SUM(total_bs), 0) as bs, COALESCE(SUM(items_count), 0) as items
+       FROM sales WHERE created_at >= $1::timestamptz AND created_at <= $2::timestamptz`,
+      [dayStart, dayEnd]
+    );
+
+    // Desglose Pagos Día Completo
+    const payRes = await db.query(
+      `SELECT p.payment_method, COUNT(*) as count, COALESCE(SUM(p.amount_usd), 0) as sum_usd, COALESCE(SUM(p.amount_bs), 0) as sum_bs
+       FROM sale_payments p
+       JOIN sales s ON p.sale_id = s.id
+       WHERE s.created_at >= $1::timestamptz AND s.created_at <= $2::timestamptz
+       GROUP BY p.payment_method ORDER BY sum_usd DESC`,
+      [dayStart, dayEnd]
+    );
+
+    res.json({
+      success: true,
+      date: todayStr,
+      currentTime: timeStr.slice(0, 5),
+      shift1: {
+        count: parseInt(s1.rows[0].count, 10),
+        usd: parseFloat(s1.rows[0].usd),
+        bs: parseFloat(s1.rows[0].bs)
+      },
+      shift2: {
+        count: parseInt(s2.rows[0].count, 10),
+        usd: parseFloat(s2.rows[0].usd),
+        bs: parseFloat(s2.rows[0].bs)
+      },
+      day: {
+        count: parseInt(dayTot.rows[0].count, 10),
+        usd: parseFloat(dayTot.rows[0].usd),
+        bs: parseFloat(dayTot.rows[0].bs),
+        items: parseInt(dayTot.rows[0].items, 10)
+      },
+      payments: payRes.rows.map(r => ({
+        method: r.payment_method,
+        count: parseInt(r.count, 10),
+        sumUsd: parseFloat(r.sum_usd),
+        sumBs: parseFloat(r.sum_bs)
+      }))
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Ejecución y registro oficial del Cierre de Caja
+app.post('/api/reports/daily-closing', async (req, res) => {
+  try {
+    const { cash_drawer_usd = 0, notes = '', closed_by = 'Cajero Principal' } = req.body;
+    const vzla = getVenezuelaTime();
+    const todayStr = formatDate(vzla);
+    const timeStr = formatTime(vzla);
+
+    const shift1Start = `${todayStr} 08:00:00-04`;
+    const shift1End = `${todayStr} 17:30:00-04`;
+    const shift2Start = `${todayStr} 18:00:00-04`;
+    const shift2End = `${todayStr} 22:00:00-04`;
+    const dayStart = `${todayStr} 00:00:00-04`;
+    const dayEnd = `${todayStr} 23:59:59-04`;
+
+    const s1 = await db.query(
+      `SELECT COUNT(*) as count, COALESCE(SUM(total_usd), 0) as usd, COALESCE(SUM(total_bs), 0) as bs
+       FROM sales WHERE created_at >= $1::timestamptz AND created_at <= $2::timestamptz`,
+      [shift1Start, shift1End]
+    );
+
+    const s2 = await db.query(
+      `SELECT COUNT(*) as count, COALESCE(SUM(total_usd), 0) as usd, COALESCE(SUM(total_bs), 0) as bs
+       FROM sales WHERE created_at >= $1::timestamptz AND created_at <= $2::timestamptz`,
+      [shift2Start, shift2End]
+    );
+
+    const dayTot = await db.query(
+      `SELECT COUNT(*) as count, COALESCE(SUM(total_usd), 0) as usd, COALESCE(SUM(total_bs), 0) as bs, COALESCE(SUM(items_count), 0) as items
+       FROM sales WHERE created_at >= $1::timestamptz AND created_at <= $2::timestamptz`,
+      [dayStart, dayEnd]
+    );
+
+    const payRes = await db.query(
+      `SELECT p.payment_method, COUNT(*) as count, COALESCE(SUM(p.amount_usd), 0) as sum_usd, COALESCE(SUM(p.amount_bs), 0) as sum_bs
+       FROM sale_payments p
+       JOIN sales s ON p.sale_id = s.id
+       WHERE s.created_at >= $1::timestamptz AND s.created_at <= $2::timestamptz
+       GROUP BY p.payment_method ORDER BY sum_usd DESC`,
+      [dayStart, dayEnd]
+    );
+
+    const payments = payRes.rows.map(r => ({
+      method: r.payment_method,
+      count: parseInt(r.count, 10),
+      sumUsd: parseFloat(r.sum_usd),
+      sumBs: parseFloat(r.sum_bs)
+    }));
+
+    const s1Count = parseInt(s1.rows[0].count, 10);
+    const s1Usd = parseFloat(s1.rows[0].usd);
+    const s1Bs = parseFloat(s1.rows[0].bs);
+
+    const s2Count = parseInt(s2.rows[0].count, 10);
+    const s2Usd = parseFloat(s2.rows[0].usd);
+    const s2Bs = parseFloat(s2.rows[0].bs);
+
+    const dayCount = parseInt(dayTot.rows[0].count, 10);
+    const dayUsd = parseFloat(dayTot.rows[0].usd);
+    const dayBs = parseFloat(dayTot.rows[0].bs);
+    const dayItems = parseInt(dayTot.rows[0].items, 10);
+
+    // Calcular efectivo reportado en Divisas
+    const cashDivisas = payments.find(p => p.method.toLowerCase().includes('divisa'))?.sumUsd || 0;
+    const drawerInput = parseFloat(cash_drawer_usd) || 0;
+    const diffUsd = drawerInput > 0 ? parseFloat((drawerInput - cashDivisas).toFixed(2)) : 0;
+
+    // Guardar en tabla daily_closings
+    const insertRes = await db.query(
+      `INSERT INTO daily_closings (
+        closing_date, shift1_sales_count, shift1_total_usd, shift1_total_bs,
+        shift2_sales_count, shift2_total_usd, shift2_total_bs,
+        day_sales_count, day_total_usd, day_total_bs, day_items_sold,
+        payment_breakdown, cash_drawer_usd, cash_difference_usd, notes, closed_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      RETURNING *`,
+      [
+        todayStr, s1Count, s1Usd, s1Bs,
+        s2Count, s2Usd, s2Bs,
+        dayCount, dayUsd, dayBs, dayItems,
+        JSON.stringify(payments), drawerInput, diffUsd, notes, closed_by
+      ]
+    );
+
+    // Guardar en kiosco_report_logs para auditoría
+    await db.query(
+      `INSERT INTO kiosco_report_logs (
+        report_date, report_time, shift_label, total_sales, total_usd, total_bs, payment_breakdown, requested_by, source
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        todayStr, timeStr.slice(0, 5), 'CIERRE_CAJA_COMPLETO', dayCount, dayUsd, dayBs,
+        JSON.stringify(payments), closed_by, 'CIERRE_CAJA_MANUAL'
+      ]
+    );
+
+    // Formatear y Enviar Notificación a Telegram
+    const token = process.env.TELEGRAM_BOT_TOKEN || '9165377394:AAH59wqZeB1AeKUQJzxJcXd2L0DJFk808mw';
+    const chatId = process.env.TELEGRAM_CHAT_ID || '7827395871';
+
+    const payLines = payments.map(p => `• *${p.method}:* $${p.sumUsd.toFixed(2)} (Bs. ${p.sumBs.toLocaleString('es-VE')}) - ${p.count} ops`).join('\n') || '• Sin ventas registradas';
+
+    let diffText = '';
+    if (drawerInput > 0) {
+      const diffLabel = diffUsd >= 0 ? `+$${diffUsd.toFixed(2)} (Sobrante)` : `-$${Math.abs(diffUsd).toFixed(2)} (Faltante)`;
+      diffText = `\n💵 *Efectivo en Gaveta:* $${drawerInput.toFixed(2)}\n⚖️ *Diferencia Caja:* ${diffLabel}`;
+    }
+
+    const tgMessage = [
+      '🏁 *CIERRE OFICIAL DE JORNADA - KIOSCO*',
+      '━━━━━━━━━━━━━━━━━━━━━━',
+      `📅 *Fecha:* ${todayStr}`,
+      `⏰ *Hora:* ${timeStr.slice(0, 5)} (Caracas)`,
+      `👤 *Responsable:* ${closed_by}`,
+      '',
+      '📊 *DETALLE POR TURNOS:*',
+      `• *Turno 1 (08:00 - 17:30):* $${s1Usd.toFixed(2)} (Bs. ${s1Bs.toLocaleString('es-VE')}) [${s1Count} ventas]`,
+      `• *Turno 2 (18:00 - 22:00):* $${s2Usd.toFixed(2)} (Bs. ${s2Bs.toLocaleString('es-VE')}) [${s2Count} ventas]`,
+      '',
+      '💰 *TOTAL CONSOLIDADO DEL DÍA:*',
+      `💵 *$${dayUsd.toFixed(2)} USD*`,
+      `🇻🇪 *Bs. ${dayBs.toLocaleString('es-VE')}*`,
+      `🧾 *Total Ventas:* ${dayCount} tickets (${dayItems} productos despachados)`,
+      '',
+      '💳 *RECAUDACIÓN POR FORMA DE PAGO:*',
+      payLines,
+      diffText,
+      notes ? `\n📝 *Notas:* ${notes}` : '',
+      '',
+      '✅ *ESTADO:* Jornada cerrada exitosamente en sistema. Contadores del día listos para la próxima apertura.'
+    ].filter(Boolean).join('\n');
+
+    let tgSuccess = false;
+    try {
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: tgMessage,
+          parse_mode: 'Markdown'
+        })
+      });
+      tgSuccess = true;
+    } catch (tgErr) {
+      console.warn('⚠️ No se pudo enviar mensaje de cierre a Telegram:', tgErr.message);
+    }
+
+    // Notificar a N8N Webhook si existe
+    const n8nWebhook = process.env.N8N_WEBHOOK_URL || 'https://nexop-n8n.nexopsystem.com/webhook/kiosco-reporte';
+    try {
+      await fetch(n8nWebhook, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          event: 'KIOSCO_DAILY_CLOSING',
+          date: todayStr,
+          time: timeStr.slice(0, 5),
+          shift1: { count: s1Count, usd: s1Usd, bs: s1Bs },
+          shift2: { count: s2Count, usd: s2Usd, bs: s2Bs },
+          day: { count: dayCount, usd: dayUsd, bs: dayBs, items: dayItems },
+          payments,
+          closedBy: closed_by
+        })
+      });
+    } catch (e) {
+      // Opcional
+    }
+
+    res.json({
+      success: true,
+      message: 'Cierre de caja registrado y enviado exitosamente',
+      telegramNotified: tgSuccess,
+      closing: insertRes.rows[0]
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Historial de Cierres de Caja para consultar días pasados
+app.get('/api/reports/daily-closing/history', async (req, res) => {
+  try {
+    const closingsRes = await db.query(
+      `SELECT * FROM daily_closings ORDER BY closing_date DESC, closed_at DESC LIMIT 30`
+    );
+    res.json({
+      success: true,
+      closings: closingsRes.rows
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });

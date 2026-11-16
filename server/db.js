@@ -117,6 +117,47 @@ async function initDatabase() {
       WHERE sale_id = 2 AND payment_method LIKE '%Pago%' AND amount_usd = 1.40;
     `);
 
+    // Tabla de Histórico de Cierres de Caja Diarios
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS daily_closings (
+        id SERIAL PRIMARY KEY,
+        closing_date DATE NOT NULL,
+        closed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        shift1_sales_count INT DEFAULT 0,
+        shift1_total_usd NUMERIC(10, 2) DEFAULT 0,
+        shift1_total_bs NUMERIC(15, 2) DEFAULT 0,
+        shift2_sales_count INT DEFAULT 0,
+        shift2_total_usd NUMERIC(10, 2) DEFAULT 0,
+        shift2_total_bs NUMERIC(15, 2) DEFAULT 0,
+        day_sales_count INT DEFAULT 0,
+        day_total_usd NUMERIC(10, 2) DEFAULT 0,
+        day_total_bs NUMERIC(15, 2) DEFAULT 0,
+        day_items_sold INT DEFAULT 0,
+        payment_breakdown JSONB DEFAULT '[]'::jsonb,
+        cash_drawer_usd NUMERIC(10, 2) DEFAULT 0,
+        cash_drawer_bs NUMERIC(15, 2) DEFAULT 0,
+        cash_difference_usd NUMERIC(10, 2) DEFAULT 0,
+        notes TEXT,
+        closed_by VARCHAR(100) DEFAULT 'Cajero Principal',
+        telegram_notified BOOLEAN DEFAULT false
+      );
+
+      CREATE TABLE IF NOT EXISTS kiosco_report_logs (
+        id SERIAL PRIMARY KEY,
+        report_date VARCHAR(50),
+        report_time VARCHAR(50),
+        shift_label VARCHAR(100),
+        total_sales INT,
+        total_usd NUMERIC(10, 2),
+        total_bs NUMERIC(15, 2),
+        payment_breakdown TEXT,
+        requested_by VARCHAR(100),
+        chat_id VARCHAR(50),
+        source VARCHAR(50),
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
     // Seed de productos de prueba si está vacía
     const countRes = await client.query('SELECT COUNT(*) FROM products');
     if (parseInt(countRes.rows[0].count, 10) === 0) {

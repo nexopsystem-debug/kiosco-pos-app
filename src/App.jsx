@@ -150,12 +150,24 @@ export default function App() {
   const [reportLoading, setReportLoading] = useState(false);
   const [telegramStatus, setTelegramStatus] = useState('');
 
-  // Estados de Contabilidad en Tiempo Real
-  const [accountingPeriod, setAccountingPeriod] = useState('today'); // 'today', 'day', 'night', 'live', 'all'
+  // Estados de Contabilidad en Tiempo Real y Filtros Extendidos
+  const [accountingPeriod, setAccountingPeriod] = useState('today'); // 'today', 'yesterday', 'week', 'month', 'day', 'night', 'live', 'custom', 'all'
+  const [accountingCustomDate, setAccountingCustomDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [accountingData, setAccountingData] = useState(null);
   const [accountingLoading, setAccountingLoading] = useState(false);
   const [accountingSearch, setAccountingSearch] = useState('');
   const [accountingCategory, setAccountingCategory] = useState('Todos');
+
+  // Estados de Cierre de Caja Oficial
+  const [showClosingModal, setShowClosingModal] = useState(false);
+  const [closingPreview, setClosingPreview] = useState(null);
+  const [closingLoading, setClosingLoading] = useState(false);
+  const [closingSubmitting, setClosingSubmitting] = useState(false);
+  const [closingCashDrawerUsd, setClosingCashDrawerUsd] = useState('');
+  const [closingCashierName, setClosingCashierName] = useState('Cajero Principal');
+  const [closingNotes, setClosingNotes] = useState('');
+  const [closingsHistory, setClosingsHistory] = useState([]);
+  const [showClosingsHistory, setShowClosingsHistory] = useState(false);
 
   // Estados de Conectividad y Modo Offline
   const [isOnline, setIsOnline] = useState(() => navigator.onLine);
@@ -312,11 +324,14 @@ export default function App() {
     }
   };
 
-  // Cargar reporte de contabilidad en tiempo real
-  const loadAccountingReport = async (period = accountingPeriod) => {
+  // Cargar reporte de contabilidad en tiempo real con filtros extendidos
+  const loadAccountingReport = async (period = accountingPeriod, customDate = accountingCustomDate) => {
     try {
       setAccountingLoading(true);
-      const res = await fetch(`/api/reports/accounting?period=${period}`);
+      const url = period === 'custom'
+        ? `/api/reports/accounting?period=custom&date=${encodeURIComponent(customDate)}`
+        : `/api/reports/accounting?period=${period}`;
+      const res = await fetch(url);
       const data = await res.json();
       if (data.success) {
         setAccountingData(data);
@@ -328,6 +343,72 @@ export default function App() {
     }
   };
 
+  // Cargar vista previa del cierre de caja del día
+  const handleOpenClosingModal = async () => {
+    try {
+      setClosingLoading(true);
+      setShowClosingModal(true);
+      setClosingCashDrawerUsd('');
+      setClosingNotes('');
+      const res = await fetch('/api/reports/daily-closing/preview');
+      const data = await res.json();
+      if (data.success) {
+        setClosingPreview(data);
+      } else {
+        showToast('⚠️ No se pudo obtener la vista previa del cierre.');
+      }
+    } catch (err) {
+      console.error('Error al cargar vista previa del cierre:', err);
+      showToast('⚠️ Error al conectar con el servidor.');
+    } finally {
+      setClosingLoading(false);
+    }
+  };
+
+  // Confirmar y registrar Cierre Oficial de Caja
+  const handleConfirmDailyClosing = async () => {
+    try {
+      setClosingSubmitting(true);
+      const payload = {
+        cashier_name: closingCashierName || 'Cajero Principal',
+        cash_drawer_usd: closingCashDrawerUsd !== '' ? parseFloat(closingCashDrawerUsd) : null,
+        notes: closingNotes || ''
+      };
+      const res = await fetch('/api/reports/daily-closing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (data.success) {
+        setShowClosingModal(false);
+        showToast('✅ ¡Cierre de caja completado y reporte oficial enviado a Telegram!');
+        loadAccountingReport(accountingPeriod, accountingCustomDate);
+        loadClosingsHistory();
+      } else {
+        showToast(`❌ Error al ejecutar cierre: ${data.error || 'Desconocido'}`);
+      }
+    } catch (err) {
+      console.error('Error al registrar cierre de caja:', err);
+      showToast('❌ Error de conexión al registrar cierre.');
+    } finally {
+      setClosingSubmitting(false);
+    }
+  };
+
+  // Cargar historial de cierres diarios guardados
+  const loadClosingsHistory = async () => {
+    try {
+      const res = await fetch('/api/reports/daily-closing/history');
+      const data = await res.json();
+      if (data.success) {
+        setClosingsHistory(data.history || []);
+      }
+    } catch (err) {
+      console.warn('Error al cargar historial de cierres:', err);
+    }
+  };
+
   useEffect(() => {
     loadProducts();
     loadRecentImages();
@@ -336,7 +417,8 @@ export default function App() {
 
   useEffect(() => {
     if (activeTab === 'accounting') {
-      loadAccountingReport(accountingPeriod);
+      loadAccountingReport(accountingPeriod, accountingCustomDate);
+      loadClosingsHistory();
     }
   }, [activeTab, accountingPeriod]);
 
@@ -1683,7 +1765,7 @@ export default function App() {
               {/* Botones de Acción */}
               <div className="flex flex-wrap items-center gap-2">
                 <button
-                  onClick={() => loadAccountingReport(accountingPeriod)}
+                  onClick={() => loadAccountingReport(accountingPeriod, accountingCustomDate)}
                   disabled={accountingLoading}
                   className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-xl text-xs flex items-center gap-1.5 border border-slate-700 transition-all active:scale-95 shadow-sm"
                   title="Recargar reporte en vivo"
@@ -1700,13 +1782,38 @@ export default function App() {
                   <Send className="w-3.5 h-3.5 text-slate-950" />
                   <span>Solicitar Reporte</span>
                 </button>
+
+                <button
+                  onClick={handleOpenClosingModal}
+                  className="px-3.5 py-2 bg-gradient-to-r from-amber-500 to-rose-600 hover:from-amber-400 hover:to-rose-500 text-white font-black rounded-xl text-xs flex items-center gap-1.5 shadow-md shadow-rose-500/25 transition-all active:scale-95 border border-amber-300/30"
+                  title="Cierre oficial del día y reporte consolidado a Telegram"
+                >
+                  <Lock className="w-3.5 h-3.5 text-white" />
+                  <span>Cierre de Caja</span>
+                </button>
+
+                <button
+                  onClick={() => setShowClosingsHistory(!showClosingsHistory)}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition-all active:scale-95 ${
+                    showClosingsHistory
+                      ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm'
+                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                  }`}
+                  title="Ver u ocultar historial de cierres de caja anteriores"
+                >
+                  <Calendar className="w-3.5 h-3.5" />
+                  <span>{showClosingsHistory ? 'Ocultar Cierres' : 'Historial Cierres'}</span>
+                </button>
               </div>
             </div>
 
-            {/* Selector de Período / Turno */}
-            <div className="mt-3 flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+            {/* Selector de Período / Turno / Fechas */}
+            <div className="mt-3 flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none flex-wrap sm:flex-nowrap">
               {[
                 { id: 'today', label: 'Hoy (Día Completo)' },
+                { id: 'yesterday', label: 'Ayer' },
+                { id: 'week', label: 'Esta Semana' },
+                { id: 'month', label: 'Este Mes' },
                 { id: 'day', label: 'Turno 1 (08:00 - 17:30)' },
                 { id: 'night', label: 'Turno 2 (18:00 - 22:00)' },
                 { id: 'live', label: 'Turno Extendido' },
@@ -1714,7 +1821,10 @@ export default function App() {
               ].map(p => (
                 <button
                   key={p.id}
-                  onClick={() => setAccountingPeriod(p.id)}
+                  onClick={() => {
+                    setAccountingPeriod(p.id);
+                    loadAccountingReport(p.id);
+                  }}
                   className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all active:scale-95 ${
                     accountingPeriod === p.id
                       ? 'bg-slate-900 text-emerald-400 shadow-sm border border-slate-800'
@@ -1724,6 +1834,28 @@ export default function App() {
                   {p.label}
                 </button>
               ))}
+
+              {/* Selector de Fecha Específica */}
+              <div className={`flex items-center gap-1 rounded-xl px-2 py-1 shrink-0 border transition-all ${
+                accountingPeriod === 'custom'
+                  ? 'bg-slate-900 text-emerald-400 border-slate-800'
+                  : 'bg-slate-100 text-slate-600 border-slate-200/80'
+              }`}>
+                <span className="text-[11px] font-bold flex items-center gap-1">
+                  <Calendar className="w-3 h-3 text-slate-400" />
+                  Fecha:
+                </span>
+                <input
+                  type="date"
+                  value={accountingCustomDate}
+                  onChange={(e) => {
+                    setAccountingCustomDate(e.target.value);
+                    setAccountingPeriod('custom');
+                    loadAccountingReport('custom', e.target.value);
+                  }}
+                  className="bg-white border border-slate-200 rounded-lg px-1.5 py-0.5 text-xs font-mono font-bold text-slate-800 outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"
+                />
+              </div>
             </div>
 
             {/* Tarjetas KPI de Totales ($ y Bs) */}
@@ -1984,6 +2116,125 @@ export default function App() {
                   );
                 })}
               </div>
+            </div>
+          )}
+
+          {/* Historial de Cierres Diarios Oficiales */}
+          {showClosingsHistory && (
+            <div className="bg-white rounded-3xl p-4 sm:p-5 border border-slate-200 shadow-sm mt-4 animate-in fade-in">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3">
+                <div className="flex items-center gap-2">
+                  <Lock className="w-5 h-5 text-amber-600" />
+                  <h3 className="text-base font-black text-slate-800">
+                    Historial de Cierres Diarios Oficiales
+                  </h3>
+                  <span className="text-[10px] font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full">
+                    {closingsHistory.length} registros
+                  </span>
+                </div>
+                <button
+                  onClick={loadClosingsHistory}
+                  className="text-xs font-bold text-slate-500 hover:text-slate-800 flex items-center gap-1"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  Actualizar
+                </button>
+              </div>
+
+              {closingsHistory.length === 0 ? (
+                <div className="py-8 text-center text-slate-400 text-xs">
+                  No hay cierres de caja registrados aún. Haz clic en "Cierre de Caja" para generar el primer cierre oficial.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {closingsHistory.map(c => {
+                    const closingDate = new Date(c.created_at);
+                    const dateFormatted = closingDate.toLocaleDateString('es-VE', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+                    const timeFormatted = closingDate.toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' });
+                    const variance = c.difference_usd !== null && c.difference_usd !== undefined ? parseFloat(c.difference_usd) : null;
+
+                    return (
+                      <div key={c.id} className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 hover:border-slate-300 transition-all text-xs">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-200/80">
+                          <div className="flex items-center gap-2">
+                            <span className="font-black text-slate-800 text-sm">{c.closing_date}</span>
+                            <span className="text-[10px] bg-slate-200 text-slate-700 px-2 py-0.5 rounded-md font-bold">
+                              {c.cashier_name || 'Cajero Principal'}
+                            </span>
+                            <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-md font-bold flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                              Reporte Telegram
+                            </span>
+                          </div>
+                          <span className="text-[11px] text-slate-400 font-mono">
+                            {dateFormatted} - {timeFormatted}
+                          </span>
+                        </div>
+
+                        {/* Comparación Turnos y Total Consolidado */}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mt-2.5">
+                          <div className="p-2.5 bg-white rounded-xl border border-slate-200">
+                            <span className="text-[10px] text-slate-400 font-bold block uppercase">Turno 1 (Día)</span>
+                            <div className="text-sm font-black text-slate-700 font-mono mt-0.5">
+                              ${parseFloat(c.shift1_total_usd || 0).toFixed(2)}
+                            </div>
+                            <span className="text-[10px] text-slate-400 block font-mono">
+                              Bs. {parseFloat(c.shift1_total_bs || 0).toLocaleString('es-VE')} ({c.shift1_tickets_count || 0} tickets)
+                            </span>
+                          </div>
+
+                          <div className="p-2.5 bg-white rounded-xl border border-slate-200">
+                            <span className="text-[10px] text-slate-400 font-bold block uppercase">Turno 2 (Noche)</span>
+                            <div className="text-sm font-black text-slate-700 font-mono mt-0.5">
+                              ${parseFloat(c.shift2_total_usd || 0).toFixed(2)}
+                            </div>
+                            <span className="text-[10px] text-slate-400 block font-mono">
+                              Bs. {parseFloat(c.shift2_total_bs || 0).toLocaleString('es-VE')} ({c.shift2_tickets_count || 0} tickets)
+                            </span>
+                          </div>
+
+                          <div className="p-2.5 bg-emerald-50 rounded-xl border border-emerald-200">
+                            <span className="text-[10px] text-emerald-800 font-bold block uppercase">Total Consolidado Día</span>
+                            <div className="text-base font-black text-emerald-700 font-mono mt-0.5">
+                              ${parseFloat(c.day_total_usd || 0).toFixed(2)}
+                            </div>
+                            <span className="text-[10px] text-emerald-600 block font-mono font-bold">
+                              Bs. {parseFloat(c.day_total_bs || 0).toLocaleString('es-VE')} ({c.day_tickets_count || 0} tickets)
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Arqueo y Notas */}
+                        <div className="mt-2.5 pt-2 border-t border-slate-200/60 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                          <div className="flex items-center gap-2">
+                            {c.cash_drawer_usd !== null && c.cash_drawer_usd !== undefined && (
+                              <span className="text-slate-600">
+                                💵 Efectivo en Caja: <strong className="font-mono">${parseFloat(c.cash_drawer_usd).toFixed(2)}</strong>
+                              </span>
+                            )}
+                            {variance !== null && (
+                              <span className={`px-2 py-0.5 rounded font-bold font-mono ${
+                                variance === 0
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : variance > 0
+                                  ? 'bg-blue-100 text-blue-800'
+                                  : 'bg-rose-100 text-rose-800'
+                              }`}>
+                                {variance === 0 ? '✓ Cuadre Perfecto' : variance > 0 ? `+ Sobrante: $${variance.toFixed(2)}` : `- Faltante: -$${Math.abs(variance).toFixed(2)}`}
+                              </span>
+                            )}
+                          </div>
+                          {c.notes && (
+                            <span className="text-slate-500 italic truncate max-w-xs">
+                              Nota: {c.notes}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
         </main>
@@ -3313,6 +3564,272 @@ export default function App() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================ */}
+      {/* 11. MODAL DE CIERRE OFICIAL DE CAJA (FIN DE JORNADA)         */}
+      {/* ============================================================ */}
+      {showClosingModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in">
+          <div className="bg-white w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl max-h-[92vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden animate-in slide-in-from-bottom sm:zoom-in-95 duration-200">
+            {/* Header del Modal */}
+            <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-amber-950 text-white px-5 py-4 flex items-center justify-between border-b border-slate-800 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-amber-500/20 rounded-xl text-amber-400 border border-amber-500/30">
+                  <Lock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-white leading-tight">
+                    Cierre de Caja Oficial
+                  </h3>
+                  <p className="text-[11px] text-amber-300 font-medium">
+                    Consolida Turno 1 + Turno 2 y envía reporte a Telegram
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowClosingModal(false)}
+                className="p-1.5 text-slate-400 hover:text-white rounded-full bg-slate-800/80 hover:bg-slate-700 transition-all"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Cuerpo del Modal */}
+            <div className="p-5 overflow-y-auto space-y-4 flex-1">
+              {closingLoading ? (
+                <div className="py-12 flex flex-col items-center justify-center gap-2 text-slate-500 text-xs">
+                  <RefreshCw className="w-6 h-6 animate-spin text-amber-500" />
+                  <span>Calculando arqueo y consolidado del día...</span>
+                </div>
+              ) : closingPreview ? (
+                <>
+                  {/* Fecha de Cierre */}
+                  <div className="flex items-center justify-between bg-amber-50 border border-amber-200/80 p-3 rounded-2xl text-xs">
+                    <div className="flex items-center gap-2">
+                      <Calendar className="w-4 h-4 text-amber-700" />
+                      <span className="font-bold text-amber-900">Fecha de Cierre:</span>
+                    </div>
+                    <span className="font-mono font-black text-amber-900 text-sm">
+                      {closingPreview.date}
+                    </span>
+                  </div>
+
+                  {/* Resumen de los 2 Turnos */}
+                  <div className="grid grid-cols-2 gap-2.5">
+                    {/* Turno 1 */}
+                    <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200">
+                      <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 mb-1">
+                        <span>Turno 1 (Día)</span>
+                        <span className="text-[10px] bg-slate-200 px-1.5 py-0.5 rounded font-mono">08:00 - 17:30</span>
+                      </div>
+                      <div className="text-base font-black text-slate-800 font-mono">
+                        ${(closingPreview.shift1?.totalUsd || 0).toFixed(2)}
+                      </div>
+                      <div className="text-[11px] text-slate-500 font-mono mt-0.5">
+                        Bs. {(closingPreview.shift1?.totalBs || 0).toLocaleString('es-VE')}
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-1 font-semibold">
+                        {closingPreview.shift1?.ticketsCount || 0} tickets emitidos
+                      </div>
+                    </div>
+
+                    {/* Turno 2 */}
+                    <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200">
+                      <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 mb-1">
+                        <span>Turno 2 (Noche)</span>
+                        <span className="text-[10px] bg-slate-200 px-1.5 py-0.5 rounded font-mono">18:00 - 22:00</span>
+                      </div>
+                      <div className="text-base font-black text-slate-800 font-mono">
+                        ${(closingPreview.shift2?.totalUsd || 0).toFixed(2)}
+                      </div>
+                      <div className="text-[11px] text-slate-500 font-mono mt-0.5">
+                        Bs. {(closingPreview.shift2?.totalBs || 0).toLocaleString('es-VE')}
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-1 font-semibold">
+                        {closingPreview.shift2?.ticketsCount || 0} tickets emitidos
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Tarjeta Consolidada del Día Completo */}
+                  <div className="bg-gradient-to-br from-emerald-500 to-teal-700 text-white p-4 rounded-2xl shadow-md">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-100 block">
+                      Total Consolidado de la Jornada
+                    </span>
+                    <div className="flex items-baseline justify-between mt-1">
+                      <div>
+                        <div className="text-2xl sm:text-3xl font-black font-mono leading-none">
+                          ${(closingPreview.dayTotal?.totalUsd || 0).toFixed(2)}
+                        </div>
+                        <div className="text-xs font-bold text-emerald-100 font-mono mt-1">
+                          Bs. {(closingPreview.dayTotal?.totalBs || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+                        </div>
+                      </div>
+                      <div className="text-right text-xs">
+                        <span className="bg-emerald-400/20 border border-emerald-300/30 px-2 py-1 rounded-lg font-bold block text-[11px]">
+                          {closingPreview.dayTotal?.ticketsCount || 0} ventas totales
+                        </span>
+                        <span className="text-[10px] text-emerald-100 block mt-1">
+                          {closingPreview.dayTotal?.itemsCount || 0} productos vendidos
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Desglose por Método de Pago */}
+                  <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 text-xs">
+                    <h4 className="font-bold text-slate-700 mb-2 flex items-center justify-between">
+                      <span>Recaudación por Forma de Pago:</span>
+                      <span className="text-[10px] text-slate-400 font-mono">Tasa: 1.000 Bs/$</span>
+                    </h4>
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <div className="p-2 bg-white rounded-xl border border-slate-200">
+                        <span className="text-slate-400 font-medium block">💵 Divisas ($)</span>
+                        <span className="font-black text-slate-800 font-mono text-xs">
+                          ${(closingPreview.paymentBreakdown?.divisaUsd?.usd || 0).toFixed(2)}
+                        </span>
+                        <span className="text-[10px] text-slate-400 block font-mono">
+                          ({closingPreview.paymentBreakdown?.divisaUsd?.ops || 0} ops)
+                        </span>
+                      </div>
+                      <div className="p-2 bg-white rounded-xl border border-slate-200">
+                        <span className="text-slate-400 font-medium block">📱 Pago Móvil</span>
+                        <span className="font-black text-slate-800 font-mono text-xs">
+                          Bs. {(closingPreview.paymentBreakdown?.pagoMovilBs?.bs || 0).toLocaleString('es-VE')}
+                        </span>
+                        <span className="text-[10px] text-slate-400 block font-mono">
+                          ${(closingPreview.paymentBreakdown?.pagoMovilBs?.usd || 0).toFixed(2)} ({closingPreview.paymentBreakdown?.pagoMovilBs?.ops || 0} ops)
+                        </span>
+                      </div>
+                      <div className="p-2 bg-white rounded-xl border border-slate-200">
+                        <span className="text-slate-400 font-medium block">🇻🇪 Efectivo Bs</span>
+                        <span className="font-black text-slate-800 font-mono text-xs">
+                          Bs. {(closingPreview.paymentBreakdown?.efectivoBs?.bs || 0).toLocaleString('es-VE')}
+                        </span>
+                        <span className="text-[10px] text-slate-400 block font-mono">
+                          ({closingPreview.paymentBreakdown?.efectivoBs?.ops || 0} ops)
+                        </span>
+                      </div>
+                      <div className="p-2 bg-white rounded-xl border border-slate-200">
+                        <span className="text-slate-400 font-medium block">💳 Punto de Venta</span>
+                        <span className="font-black text-slate-800 font-mono text-xs">
+                          Bs. {(closingPreview.paymentBreakdown?.puntoBs?.bs || 0).toLocaleString('es-VE')}
+                        </span>
+                        <span className="text-[10px] text-slate-400 block font-mono">
+                          ({closingPreview.paymentBreakdown?.puntoBs?.ops || 0} ops)
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Arqueo de Caja / Conteo Físico en Efectivo */}
+                  <div className="p-3.5 bg-amber-50/60 rounded-2xl border border-amber-200 text-xs">
+                    <label className="block font-bold text-amber-900 mb-1">
+                      Arqueo de Efectivo en Gaveta ($ USD):
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <div className="relative flex-1">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 font-mono font-bold text-slate-400">$</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          placeholder="0.00"
+                          value={closingCashDrawerUsd}
+                          onChange={(e) => setClosingCashDrawerUsd(e.target.value)}
+                          className="w-full pl-7 pr-3 py-2 bg-white border border-amber-200 rounded-xl font-mono font-bold text-sm text-slate-800 outline-none focus:ring-2 focus:ring-amber-500"
+                        />
+                      </div>
+                      {closingCashDrawerUsd !== '' && (
+                        <div className="text-right">
+                          <span className="text-[10px] text-slate-500 font-bold block uppercase">Diferencia</span>
+                          {(() => {
+                            const expected = closingPreview.paymentBreakdown?.divisaUsd?.usd || 0;
+                            const actual = parseFloat(closingCashDrawerUsd) || 0;
+                            const diff = actual - expected;
+                            return (
+                              <span className={`font-mono font-black text-xs px-2 py-0.5 rounded ${
+                                Math.abs(diff) < 0.01
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : diff > 0
+                                  ? 'bg-blue-100 text-blue-800'
+                                  : 'bg-rose-100 text-rose-800'
+                              }`}>
+                                {Math.abs(diff) < 0.01 ? '✓ Cuadre Exacto' : diff > 0 ? `+ Sobrante: $${diff.toFixed(2)}` : `- Faltante: -$${Math.abs(diff).toFixed(2)}`}
+                              </span>
+                            );
+                          })()}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Nombre del Cajero y Notas */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <label className="block text-slate-500 font-bold mb-1">Cajero / Responsable:</label>
+                      <input
+                        type="text"
+                        value={closingCashierName}
+                        onChange={(e) => setClosingCashierName(e.target.value)}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800 text-xs outline-none focus:ring-2 focus:ring-emerald-500"
+                        placeholder="Ej. Cajero Principal"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-500 font-bold mb-1">Notas u Observaciones:</label>
+                      <input
+                        type="text"
+                        value={closingNotes}
+                        onChange={(e) => setClosingNotes(e.target.value)}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 text-xs outline-none focus:ring-2 focus:ring-emerald-500"
+                        placeholder="Ej. Todo cuadrado sin novedades"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Nota aclaratoria sobre la persistencia */}
+                  <div className="p-3 bg-slate-100 rounded-xl text-[11px] text-slate-600 flex items-start gap-2">
+                    <span className="text-base leading-none">ℹ️</span>
+                    <div>
+                      <strong>Reinicio Automático para el Siguiente Día:</strong> Todos los datos de hoy quedan archivados permanentemente en la base de datos y en el Historial de Contabilidad. A partir de medianoche o en la próxima jornada, los contadores de "Hoy" comenzarán limpios en $0.00 automáticamente.
+                    </div>
+                  </div>
+                </>
+              ) : null}
+            </div>
+
+            {/* Footer de Acciones del Modal */}
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowClosingModal(false)}
+                className="px-4 py-2.5 border border-slate-300 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 active:scale-95 transition-all"
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="button"
+                onClick={handleConfirmDailyClosing}
+                disabled={closingLoading || closingSubmitting}
+                className="flex-1 py-2.5 px-4 bg-gradient-to-r from-amber-500 to-rose-600 hover:from-amber-400 hover:to-rose-500 disabled:opacity-50 text-white font-black text-xs sm:text-sm rounded-xl shadow-lg shadow-rose-500/20 active:scale-95 transition-all flex items-center justify-center gap-1.5"
+              >
+                {closingSubmitting ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin text-white" />
+                    <span>Guardando Cierre y Enviando...</span>
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4" />
+                    <span>Ejecutar Cierre y Enviar Reporte Oficial</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
