@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 const db = require('./db');
 require('dotenv').config();
 
@@ -23,11 +24,107 @@ async function getExchangeRate() {
   }
 }
 
+// --- Helper para sincronizar productos con GitHub ---
+async function syncProductsToGithub() {
+  const token = process.env.GITHUB_TOKEN;
+  const repo = process.env.GITHUB_REPO || 'nexopsystem-debug/kiosco-pos-app';
+
+  try {
+    // 1. Obtener todos los productos activos de la base de datos
+    const result = await db.query(
+      'SELECT id, name, category, price_usd, stock, image_url, is_active FROM products WHERE is_active = true ORDER BY id ASC'
+    );
+    const products = result.rows.map(p => ({
+      ...p,
+      price_usd: parseFloat(p.price_usd),
+      stock: parseInt(p.stock, 10)
+    }));
+
+    const contentStr = JSON.stringify(products, null, 2);
+
+    // Guardar en el filesystem local si la carpeta existe
+    try {
+      const localDir = path.join(__dirname, '../data');
+      if (!fs.existsSync(localDir)) {
+        fs.mkdirSync(localDir, { recursive: true });
+      }
+      fs.writeFileSync(path.join(localDir, 'products.json'), contentStr, 'utf8');
+    } catch (fsErr) {
+      console.warn('⚠️ No se pudo escribir localmente en data/products.json:', fsErr.message);
+    }
+
+    if (!token) {
+      console.log('ℹ️ GITHUB_TOKEN no configurado en entorno, sincronización remota omitida.');
+      return { success: false, skipped: true, message: 'GITHUB_TOKEN no configurado' };
+    }
+
+    // 2. Consultar SHA actual del archivo en GitHub
+    const filePath = 'data/products.json';
+    const apiUrl = `https://api.github.com/repos/${repo}/contents/${filePath}`;
+    let currentSha = null;
+
+    try {
+      const getRes = await fetch(apiUrl, {
+        headers: {
+          'Authorization': `token ${token}`,
+          'User-Agent': 'Kiosco-POS-App',
+          'Accept': 'application/vnd.github.v3+json'
+        }
+      });
+      if (getRes.ok) {
+        const fileInfo = await getRes.json();
+        currentSha = fileInfo.sha;
+      }
+    } catch (e) {
+      console.warn('ℹ️ Archivo nuevo o no encontrado en GitHub, se creará uno nuevo.');
+    }
+
+    // 3. Crear o actualizar el archivo en GitHub
+    const bodyPayload = {
+      message: `chore(catalog): sincronizar inventario de productos (${products.length} items) [skip ci]`,
+      content: Buffer.from(contentStr, 'utf8').toString('base64'),
+      branch: 'main'
+    };
+    if (currentSha) {
+      bodyPayload.sha = currentSha;
+    }
+
+    const putRes = await fetch(apiUrl, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `token ${token}`,
+        'User-Agent': 'Kiosco-POS-App',
+        'Content-Type': 'application/json',
+        'Accept': 'application/vnd.github.v3+json'
+      },
+      body: JSON.stringify(bodyPayload)
+    });
+
+    if (putRes.ok) {
+      const putData = await putRes.json();
+      console.log(' Sincronizado exitosamente con GitHub:', putData.commit?.html_url);
+      return {
+        success: true,
+        count: products.length,
+        commitUrl: putData.commit?.html_url,
+        sha: putData.commit?.sha
+      };
+    } else {
+      const errText = await putRes.text();
+      console.warn('⚠️ Error al subir a GitHub:', putRes.status, errText);
+      return { success: false, error: errText };
+    }
+  } catch (err) {
+    console.error('⚠️ Excepción en syncProductsToGithub:', err.message);
+    return { success: false, error: err.message };
+  }
+}
+
 // ==========================================
 // 1. ENDPOINTS DE PRODUCTOS
 // ==========================================
 
-// Listar productos
+// Listar productos activos (para POS y Almacén)
 app.get('/api/products', async (req, res) => {
   try {
     const rate = await getExchangeRate();
@@ -37,6 +134,7 @@ app.get('/api/products', async (req, res) => {
     const products = result.rows.map(p => ({
       ...p,
       price_usd: parseFloat(p.price_usd),
+      stock: parseInt(p.stock, 10),
       price_bs: parseFloat((parseFloat(p.price_usd) * rate).toFixed(2))
     }));
     res.json({ success: true, rate, products });
@@ -45,7 +143,7 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
-// Crear producto
+// Listar todos los productos (incluyendo inactivos si se requiere en almacén)
 app.get('/api/products/all', async (req, res) => {
   try {
     const rate = await getExchangeRate();
@@ -55,6 +153,7 @@ app.get('/api/products/all', async (req, res) => {
     const products = result.rows.map(p => ({
       ...p,
       price_usd: parseFloat(p.price_usd),
+      stock: parseInt(p.stock, 10),
       price_bs: parseFloat((parseFloat(p.price_usd) * rate).toFixed(2))
     }));
     res.json({ success: true, rate, products });
@@ -63,6 +162,7 @@ app.get('/api/products/all', async (req, res) => {
   }
 });
 
+// Crear producto nuevo
 app.post('/api/products', async (req, res) => {
   try {
     const { name, category, price_usd, stock, image_url } = req.body;
@@ -70,21 +170,38 @@ app.post('/api/products', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Nombre y precio son requeridos' });
     }
     const result = await db.query(
-      `INSERT INTO products (name, category, price_usd, stock, image_url)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [name, category || 'Varios', parseFloat(price_usd), parseInt(stock, 10) || 0, image_url || '']
+      `INSERT INTO products (name, category, price_usd, stock, image_url, is_active)
+       VALUES ($1, $2, $3, $4, $5, true) RETURNING *`,
+      [
+        name.trim(),
+        category ? category.trim() : 'Varios',
+        parseFloat(price_usd),
+        parseInt(stock, 10) || 0,
+        image_url ? image_url.trim() : ''
+      ]
     );
-    res.json({ success: true, product: result.rows[0] });
+
+    const newProd = {
+      ...result.rows[0],
+      price_usd: parseFloat(result.rows[0].price_usd),
+      stock: parseInt(result.rows[0].stock, 10)
+    };
+
+    // Sincronizar automáticamente con GitHub en segundo plano
+    syncProductsToGithub().catch(e => console.warn('Sync background error:', e.message));
+
+    res.json({ success: true, product: newProd });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// Modificar producto
+// Modificar producto existente
 app.put('/api/products/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { name, category, price_usd, stock, image_url, is_active } = req.body;
+
     const result = await db.query(
       `UPDATE products 
        SET name = COALESCE($1, name),
@@ -94,12 +211,31 @@ app.put('/api/products/:id', async (req, res) => {
            image_url = COALESCE($5, image_url),
            is_active = COALESCE($6, is_active)
        WHERE id = $7 RETURNING *`,
-      [name, category, price_usd, stock, image_url, is_active, id]
+      [
+        name !== undefined ? name.trim() : null,
+        category !== undefined ? category.trim() : null,
+        price_usd !== undefined ? parseFloat(price_usd) : null,
+        stock !== undefined ? parseInt(stock, 10) : null,
+        image_url !== undefined ? image_url.trim() : null,
+        is_active,
+        id
+      ]
     );
+
     if (!result.rows.length) {
       return res.status(404).json({ success: false, error: 'Producto no encontrado' });
     }
-    res.json({ success: true, product: result.rows[0] });
+
+    const updatedProd = {
+      ...result.rows[0],
+      price_usd: parseFloat(result.rows[0].price_usd),
+      stock: parseInt(result.rows[0].stock, 10)
+    };
+
+    // Sincronizar automáticamente con GitHub
+    syncProductsToGithub().catch(e => console.warn('Sync background error:', e.message));
+
+    res.json({ success: true, product: updatedProd });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -110,7 +246,21 @@ app.delete('/api/products/:id', async (req, res) => {
   try {
     const { id } = req.params;
     await db.query('UPDATE products SET is_active = false WHERE id = $1', [id]);
-    res.json({ success: true, message: 'Producto desactivado' });
+
+    // Sincronizar automáticamente con GitHub
+    syncProductsToGithub().catch(e => console.warn('Sync background error:', e.message));
+
+    res.json({ success: true, message: 'Producto desactivado correctamente' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Disparar sincronización manual con GitHub
+app.post('/api/products/sync-github', async (req, res) => {
+  try {
+    const syncResult = await syncProductsToGithub();
+    res.json(syncResult);
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -432,28 +582,13 @@ app.post('/api/reports/request-telegram', async (req, res) => {
 });
 
 // ==========================================
-// 4. CONFIGURACIÓN Y PIN
+// 4. CONFIGURACIÓN
 // ==========================================
 
 app.get('/api/settings', async (req, res) => {
   try {
     const rate = await getExchangeRate();
     res.json({ success: true, exchange_rate: rate });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-app.post('/api/settings/verify-pin', async (req, res) => {
-  try {
-    const { pin } = req.body;
-    const pinRes = await db.query("SELECT value FROM settings WHERE key = 'admin_pin'");
-    const adminPin = pinRes.rows.length ? pinRes.rows[0].value : '1234';
-    if (pin === adminPin || pin === '1234') {
-      res.json({ success: true, authorized: true });
-    } else {
-      res.status(401).json({ success: false, authorized: false, error: 'PIN incorrecto' });
-    }
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

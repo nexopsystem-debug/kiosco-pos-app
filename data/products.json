@@ -1,0 +1,110 @@
+[
+  {
+    "id": 1,
+    "name": "Coca-Cola 1.5L",
+    "category": "Bebidas",
+    "price_usd": 2.0,
+    "stock": 24,
+    "image_url": "https://images.unsplash.com/photo-1622483767028-3f66f32aef97?w=500&auto=format&fit=crop&q=80",
+    "is_active": true
+  },
+  {
+    "id": 2,
+    "name": "Doritos Mega Queso",
+    "category": "Snacks",
+    "price_usd": 1.5,
+    "stock": 18,
+    "image_url": "https://images.unsplash.com/photo-1566478989037-eec170784d0b?w=500&auto=format&fit=crop&q=80",
+    "is_active": true
+  },
+  {
+    "id": 3,
+    "name": "Galletas Oreo Paquete",
+    "category": "Golosinas",
+    "price_usd": 0.8,
+    "stock": 30,
+    "image_url": "https://images.unsplash.com/photo-1558961363-fa8fdf82db35?w=500&auto=format&fit=crop&q=80",
+    "is_active": true
+  },
+  {
+    "id": 4,
+    "name": "Agua Mineral Minalba 500ml",
+    "category": "Bebidas",
+    "price_usd": 0.5,
+    "stock": 40,
+    "image_url": "https://images.unsplash.com/photo-1548839140-29a749e1bc4e?w=500&auto=format&fit=crop&q=80",
+    "is_active": true
+  },
+  {
+    "id": 5,
+    "name": "Chocolate Savoy con Leche",
+    "category": "Golosinas",
+    "price_usd": 1.2,
+    "stock": 15,
+    "image_url": "https://images.unsplash.com/photo-1606312619070-d48b4c652a52?w=500&auto=format&fit=crop&q=80",
+    "is_active": true
+  },
+  {
+    "id": 6,
+    "name": "Maltín Polar Botella",
+    "category": "Bebidas",
+    "price_usd": 1.0,
+    "stock": 20,
+    "image_url": "https://images.unsplash.com/photo-1581009146145-b5ef050c2e1e?w=500&auto=format&fit=crop&q=80",
+    "is_active": true
+  },
+  {
+    "id": 7,
+    "name": "Papas Ruffles Original",
+    "category": "Snacks",
+    "price_usd": 1.5,
+    "stock": 12,
+    "image_url": "https://images.unsplash.com/photo-1527842891421-42eec6e703ea?w=500&auto=format&fit=crop&q=80",
+    "is_active": true
+  },
+  {
+    "id": 8,
+    "name": "Pirulin Lata 300g",
+    "category": "Golosinas",
+    "price_usd": 3.5,
+    "stock": 8,
+    "image_url": "https://images.unsplash.com/photo-1582293041079-7814c2f12063?w=500&auto=format&fit=crop&q=80",
+    "is_active": true
+  },
+  {
+    "id": 9,
+    "name": "Chicles Trident Menta",
+    "category": "Golosinas",
+    "price_usd": 0.5,
+    "stock": 25,
+    "image_url": "https://images.unsplash.com/photo-1582058091505-f87a2e55a40f?w=500&auto=format&fit=crop&q=80",
+    "is_active": true
+  },
+  {
+    "id": 10,
+    "name": "Jugo del Valle Naranja 250ml",
+    "category": "Bebidas",
+    "price_usd": 0.9,
+    "stock": 16,
+    "image_url": "https://images.unsplash.com/photo-1600271886742-f049cd451bba?w=500&auto=format&fit=crop&q=80",
+    "is_active": true
+  },
+  {
+    "id": 11,
+    "name": "Cigarrillos Belmont 20s",
+    "category": "Varios",
+    "price_usd": 2.5,
+    "stock": 10,
+    "image_url": "https://images.unsplash.com/photo-1527061011665-3652c757a4d4?w=500&auto=format&fit=crop&q=80",
+    "is_active": true
+  },
+  {
+    "id": 12,
+    "name": "Encendedor Clipper / Bic",
+    "category": "Varios",
+    "price_usd": 0.7,
+    "stock": 20,
+    "image_url": "https://images.unsplash.com/photo-1512418490979-92798cec1380?w=500&auto=format&fit=crop&q=80",
+    "is_active": true
+  }
+]
