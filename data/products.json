@@ -52,5 +52,14 @@
     "stock": 20,
     "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/1000398315-1794801920615.jpg",
     "is_active": true
+  },
+  {
+    "id": 16,
+    "name": "Cigarros Bohem Rojo Detallado",
+    "category": "Cigarros",
+    "price_usd": 0.2,
+    "stock": 20,
+    "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/1000398313-1794801973806.jpg",
+    "is_active": true
   }
 ]
