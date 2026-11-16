@@ -9,15 +9,6 @@
     "is_active": true
   },
   {
-    "id": 2,
-    "name": "Doritos Mega Queso",
-    "category": "Snacks",
-    "price_usd": 1.5,
-    "stock": 17,
-    "image_url": "https://images.unsplash.com/photo-1566478989037-eec170784d0b?w=500&auto=format&fit=crop&q=80",
-    "is_active": true
-  },
-  {
     "id": 4,
     "name": "Agua Mineral Heleal 600ml",
     "category": "Bebidas",
