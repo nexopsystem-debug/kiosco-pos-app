@@ -9,7 +9,17 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.json());
+// Permitir payloads de imágenes base64 de hasta 15MB
+app.use(express.json({ limit: '15mb' }));
+app.use(express.urlencoded({ limit: '15mb', extended: true }));
+
+// Asegurar y servir directorio local de uploads
+const uploadDir = path.join(__dirname, '../public/uploads');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+app.use('/uploads', express.static(uploadDir));
+app.use(express.static(path.join(__dirname, '../public')));
 
 // Iniciar base de datos
 db.initDatabase();
@@ -143,7 +153,7 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
-// Listar todos los productos (incluyendo inactivos si se requiere en almacén)
+// Listar todos los productos (incluyendo inactivos)
 app.get('/api/products/all', async (req, res) => {
   try {
     const rate = await getExchangeRate();
@@ -256,7 +266,7 @@ app.delete('/api/products/:id', async (req, res) => {
   }
 });
 
-// Disparar sincronización manual con GitHub
+// Disparar sincronización manual con GitHub ("Actualizar Productos")
 app.post('/api/products/sync-github', async (req, res) => {
   try {
     const syncResult = await syncProductsToGithub();
@@ -267,7 +277,169 @@ app.post('/api/products/sync-github', async (req, res) => {
 });
 
 // ==========================================
-// 2. ENDPOINTS DE VENTAS (POS)
+// 2. ENDPOINTS DE IMÁGENES Y UPLOADS A GIT
+// ==========================================
+
+// Subir imagen desde el dispositivo y guardarla en el repositorio de GitHub
+app.post('/api/upload-image', async (req, res) => {
+  try {
+    const { filename, data } = req.body;
+    if (!data) {
+      return res.status(400).json({ success: false, error: 'No se envió información de imagen' });
+    }
+
+    // Limpiar prefijo base64 (ej: data:image/jpeg;base64,...)
+    const matches = data.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+    let buffer;
+    let ext = 'jpg';
+    if (matches && matches.length === 3) {
+      const mime = matches[1];
+      if (mime.includes('png')) ext = 'png';
+      else if (mime.includes('webp')) ext = 'webp';
+      else if (mime.includes('gif')) ext = 'gif';
+      buffer = Buffer.from(matches[2], 'base64');
+    } else {
+      buffer = Buffer.from(data, 'base64');
+    }
+
+    // Nombre único y limpio
+    const cleanBase = (filename || 'producto')
+      .toLowerCase()
+      .replace(/\.[^/.]+$/, '')
+      .replace(/[^a-z0-9_-]/g, '-')
+      .replace(/-+/g, '-')
+      .slice(0, 30);
+    const uniqueName = `${cleanBase}-${Date.now()}.${ext}`;
+
+    // 1. Guardar localmente
+    const targetUploadDir = path.join(__dirname, '../public/uploads');
+    if (!fs.existsSync(targetUploadDir)) {
+      fs.mkdirSync(targetUploadDir, { recursive: true });
+    }
+    const localFilePath = path.join(targetUploadDir, uniqueName);
+    fs.writeFileSync(localFilePath, buffer);
+
+    // 2. Subir a GitHub en public/uploads/
+    const token = process.env.GITHUB_TOKEN;
+    const repo = process.env.GITHUB_REPO || 'nexopsystem-debug/kiosco-pos-app';
+    let commitUrl = null;
+
+    if (token) {
+      try {
+        const ghPath = `public/uploads/${uniqueName}`;
+        const apiUrl = `https://api.github.com/repos/${repo}/contents/${ghPath}`;
+        const putRes = await fetch(apiUrl, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `token ${token}`,
+            'User-Agent': 'Kiosco-POS-App',
+            'Content-Type': 'application/json',
+            'Accept': 'application/vnd.github.v3+json'
+          },
+          body: JSON.stringify({
+            message: `feat(upload): subir imagen de producto ${uniqueName} [skip ci]`,
+            content: buffer.toString('base64'),
+            branch: 'main'
+          })
+        });
+
+        if (putRes.ok) {
+          const putData = await putRes.json();
+          commitUrl = putData.commit?.html_url;
+          console.log(' Imagen subida exitosamente a GitHub:', commitUrl);
+        } else {
+          console.warn('⚠️ Error al subir imagen a GitHub:', putRes.status, await putRes.text());
+        }
+      } catch (ghErr) {
+        console.warn('⚠️ Excepción al subir imagen a GitHub:', ghErr.message);
+      }
+    }
+
+    // URLs accesibles
+    const rawGithubUrl = `https://raw.githubusercontent.com/${repo}/main/public/uploads/${uniqueName}`;
+    const localUrl = `/uploads/${uniqueName}`;
+
+    res.json({
+      success: true,
+      filename: uniqueName,
+      url: rawGithubUrl,
+      localUrl,
+      commitUrl
+    });
+  } catch (err) {
+    console.error('Error al subir imagen:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Obtener las últimas imágenes cargadas en el repositorio
+app.get('/api/uploads/recent', async (req, res) => {
+  try {
+    const token = process.env.GITHUB_TOKEN;
+    const repo = process.env.GITHUB_REPO || 'nexopsystem-debug/kiosco-pos-app';
+    const images = [];
+
+    // 1. Consultar uploads en GitHub
+    if (token) {
+      try {
+        const apiUrl = `https://api.github.com/repos/${repo}/contents/public/uploads`;
+        const ghRes = await fetch(apiUrl, {
+          headers: {
+            'Authorization': `token ${token}`,
+            'User-Agent': 'Kiosco-POS-App',
+            'Accept': 'application/vnd.github.v3+json'
+          }
+        });
+
+        if (ghRes.ok) {
+          const files = await ghRes.json();
+          if (Array.isArray(files)) {
+            files
+              .filter(f => f.type === 'file' && /\.(jpg|jpeg|png|webp|gif)$/i.test(f.name))
+              .reverse() // Recientes primero
+              .forEach(f => {
+                images.push({
+                  name: f.name,
+                  url: `https://raw.githubusercontent.com/${repo}/main/public/uploads/${f.name}`,
+                  downloadUrl: f.download_url
+                });
+              });
+          }
+        }
+      } catch (ghErr) {
+        console.warn('⚠️ Error consultando uploads en GitHub:', ghErr.message);
+      }
+    }
+
+    // 2. Si hay archivos locales que aún no están en la lista
+    const targetUploadDir = path.join(__dirname, '../public/uploads');
+    if (fs.existsSync(targetUploadDir)) {
+      try {
+        const localFiles = fs.readdirSync(targetUploadDir);
+        localFiles
+          .filter(f => /\.(jpg|jpeg|png|webp|gif)$/i.test(f))
+          .reverse()
+          .forEach(f => {
+            if (!images.some(img => img.name === f)) {
+              images.push({
+                name: f,
+                url: `/uploads/${f}`
+              });
+            }
+          });
+      } catch (fsErr) {
+        // Ignorar
+      }
+    }
+
+    res.json({ success: true, images: images.slice(0, 15) });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==========================================
+// 3. ENDPOINTS DE VENTAS (POS)
 // ==========================================
 
 app.post('/api/sales', async (req, res) => {
@@ -404,7 +576,7 @@ function formatTime(date) {
 }
 
 // ==========================================
-// 3. REPORTES DE VENTAS & CIERRES
+// 4. REPORTES DE VENTAS & CIERRES
 // ==========================================
 
 app.get('/api/reports/summary', async (req, res) => {
@@ -582,7 +754,7 @@ app.post('/api/reports/request-telegram', async (req, res) => {
 });
 
 // ==========================================
-// 4. CONFIGURACIÓN
+// 5. CONFIGURACIÓN
 // ==========================================
 
 app.get('/api/settings', async (req, res) => {

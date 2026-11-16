@@ -28,7 +28,9 @@ import {
   Save,
   UploadCloud,
   Check,
-  Tag
+  Tag,
+  Camera,
+  Image as ImageIcon
 } from 'lucide-react';
 
 const PRESET_IMAGES = [
@@ -81,9 +83,11 @@ export default function App() {
   });
   const [savingProduct, setSavingProduct] = useState(false);
 
-  // Estados de Sincronización con GitHub
+  // Estados de Sincronización con GitHub y Almacenamiento de Fotos
   const [syncingGithub, setSyncingGithub] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
+  const [recentImages, setRecentImages] = useState([]);
+  const [uploadingImage, setUploadingImage] = useState(false);
 
   // Estados de Pago
   const [paymentMethods, setPaymentMethods] = useState({
@@ -127,8 +131,22 @@ export default function App() {
     }
   };
 
+  // Cargar las imágenes más recientes guardadas en el repositorio
+  const loadRecentImages = async () => {
+    try {
+      const res = await fetch('/api/uploads/recent');
+      const data = await res.json();
+      if (data.success && Array.isArray(data.images)) {
+        setRecentImages(data.images);
+      }
+    } catch (err) {
+      console.warn('No se pudieron obtener imágenes recientes:', err);
+    }
+  };
+
   useEffect(() => {
     loadProducts();
+    loadRecentImages();
   }, []);
 
   // Categorías dinámicas
@@ -337,7 +355,7 @@ export default function App() {
       category: 'Snacks',
       price_usd: '',
       stock: '20',
-      image_url: PRESET_IMAGES[1].url
+      image_url: recentImages.length > 0 ? recentImages[0].url : PRESET_IMAGES[1].url
     });
     setShowProductModal(true);
   };
@@ -430,19 +448,94 @@ export default function App() {
     }
   };
 
-  // Disparar sincronización manual con GitHub
+  // Compresión de imagen en cliente (para optimizar consumo y rapidez en móvil/tablet)
+  const compressImage = (file, maxWidth = 800, maxHeight = 800, quality = 0.85) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (e) => {
+        const img = new Image();
+        img.src = e.target.result;
+        img.onload = () => {
+          let width = img.width;
+          let height = img.height;
+          if (width > height) {
+            if (width > maxWidth) {
+              height = Math.round((height * maxWidth) / width);
+              width = maxWidth;
+            }
+          } else {
+            if (height > maxHeight) {
+              width = Math.round((width * maxHeight) / height);
+              height = maxHeight;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        };
+        img.onerror = reject;
+      };
+      reader.onerror = reject;
+    });
+  };
+
+  // Subir imagen desde el dispositivo y guardarla en el repositorio de GitHub
+  const handleImageFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setUploadingImage(true);
+      // Redimensionar para subir rápido desde teléfonos/tablets
+      const compressedData = await compressImage(file);
+
+      const res = await fetch('/api/upload-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filename: file.name,
+          data: compressedData
+        })
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setProductForm(prev => ({ ...prev, image_url: data.url }));
+        showToast('📸 Foto subida y guardada en GitHub con éxito');
+        loadRecentImages();
+      } else {
+        alert('Error al subir imagen: ' + (data.error || 'Desconocido'));
+      }
+    } catch (err) {
+      console.error('Error al subir imagen:', err);
+      alert('Error al procesar la imagen seleccionada');
+    } finally {
+      setUploadingImage(false);
+      e.target.value = '';
+    }
+  };
+
+  // Disparar sincronización manual ("Actualizar Productos")
   const handleManualSyncGithub = async () => {
     try {
       setSyncingGithub(true);
-      const res = await fetch('/api/products/sync-github', { method: 'POST' });
-      const data = await res.json();
+      const [syncRes] = await Promise.all([
+        fetch('/api/products/sync-github', { method: 'POST' }),
+        loadRecentImages(),
+        loadProducts()
+      ]);
+      const data = await syncRes.json();
       if (data.success) {
-        showToast(` Respaldo completado en GitHub (${data.count} productos)`);
+        showToast(`✅ Catálogo e imágenes actualizados en GitHub (${data.count} productos)`);
       } else {
-        showToast(`ℹ️ GitHub: ${data.message || 'Sincronizado'}`);
+        showToast(`ℹ️ ${data.message || 'Catálogo actualizado'}`);
       }
     } catch (err) {
-      showToast('⚠️ Error al conectar con GitHub');
+      showToast('⚠️ Error al actualizar productos');
     } finally {
       setSyncingGithub(false);
     }
@@ -720,14 +813,14 @@ export default function App() {
                   onClick={handleManualSyncGithub}
                   disabled={syncingGithub}
                   className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-xl text-xs flex items-center gap-1.5 border border-slate-700 transition-all active:scale-95 shadow-sm"
-                  title="Respaldar archivo data/products.json en GitHub"
+                  title="Actualizar catálogo y últimas imágenes desde GitHub"
                 >
                   {syncingGithub ? (
                     <RefreshCw className="w-4 h-4 animate-spin text-emerald-400" />
                   ) : (
-                    <GitBranch className="w-4 h-4 text-emerald-400" />
+                    <RefreshCw className="w-4 h-4 text-emerald-400" />
                   )}
-                  <span>{syncingGithub ? 'Sincronizando...' : 'Respaldar en GitHub'}</span>
+                  <span>{syncingGithub ? 'Actualizando...' : 'Actualizar Productos'}</span>
                 </button>
 
                 <button
@@ -1050,16 +1143,59 @@ export default function App() {
 
               {/* Imagen del Producto */}
               <div>
-                <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block mb-1">
-                  URL de Imagen del Producto
-                </label>
-                <input
-                  type="url"
-                  placeholder="https://images.unsplash.com/..."
-                  value={productForm.image_url}
-                  onChange={e => setProductForm({ ...productForm, image_url: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-emerald-500 focus:bg-white focus:outline-none"
-                />
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
+                    URL de Imagen del Producto
+                  </label>
+                  {/* Botón para subir desde el dispositivo directamente a Git */}
+                  <label
+                    htmlFor="device-image-upload"
+                    className={`cursor-pointer inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold rounded-lg text-xs border border-emerald-300 transition-all active:scale-95 shadow-sm ${
+                      uploadingImage ? 'opacity-50 pointer-events-none' : ''
+                    }`}
+                    title="Tomar foto con la cámara o seleccionar de la galería de este dispositivo"
+                  >
+                    {uploadingImage ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-600" />
+                        <span>Subiendo a Git...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Camera className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Subir desde dispositivo</span>
+                      </>
+                    )}
+                  </label>
+                  <input
+                    type="file"
+                    id="device-image-upload"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleImageFileUpload}
+                    disabled={uploadingImage}
+                  />
+                </div>
+
+                <div className="relative">
+                  <input
+                    type="url"
+                    placeholder="https://... o pulsa 'Subir desde dispositivo'"
+                    value={productForm.image_url}
+                    onChange={e => setProductForm({ ...productForm, image_url: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-emerald-500 focus:bg-white focus:outline-none pr-8"
+                  />
+                  {productForm.image_url && (
+                    <button
+                      type="button"
+                      onClick={() => setProductForm({ ...productForm, image_url: '' })}
+                      className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600"
+                      title="Limpiar imagen"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
 
                 {/* Vista Previa de Imagen */}
                 {productForm.image_url && (
@@ -1067,34 +1203,76 @@ export default function App() {
                     <img
                       src={productForm.image_url}
                       alt="Vista previa"
-                      className="w-14 h-14 object-cover rounded-lg bg-slate-200 border"
+                      className="w-14 h-14 object-cover rounded-lg bg-slate-200 border shrink-0"
                       onError={e => {
                         e.target.src = 'https://images.unsplash.com/photo-1527842891421-42eec6e703ea?w=200';
                       }}
                     />
-                    <div>
+                    <div className="flex-1 min-w-0">
                       <span className="text-[10px] text-slate-400 font-bold block">Vista previa activa</span>
-                      <span className="text-xs font-bold text-slate-700 truncate max-w-[200px] block">
+                      <span className="text-xs font-bold text-slate-700 truncate block">
                         {productForm.name || 'Producto'}
+                      </span>
+                      <span className="text-[10px] text-emerald-600 font-mono truncate block">
+                        {productForm.image_url.includes('raw.githubusercontent.com')
+                          ? '✓ Guardada en repositorio GitHub'
+                          : productForm.image_url.startsWith('/uploads')
+                          ? '✓ Guardada localmente'
+                          : 'Enlace externo web'}
                       </span>
                     </div>
                   </div>
                 )}
 
                 {/* Galería de imágenes rápidas */}
-                <div className="mt-2">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
-                    O toca una imagen de muestra rápida:
-                  </span>
-                  <div className="grid grid-cols-5 gap-1.5">
+                <div className="mt-3">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                      O toca una imagen de muestra rápida:
+                    </span>
+                    {recentImages.length > 0 && (
+                      <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                        {recentImages.length} en GitHub
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-5 gap-1.5 max-h-40 overflow-y-auto p-1.5 bg-slate-50 rounded-xl border border-slate-200">
+                    {/* Imágenes más recientes subidas al repositorio */}
+                    {recentImages.map((imgItem, idx) => (
+                      <button
+                        type="button"
+                        key={`recent-${idx}`}
+                        onClick={() => setProductForm({ ...productForm, image_url: imgItem.url })}
+                        className={`relative rounded-lg overflow-hidden border aspect-square p-0.5 transition-all group ${
+                          productForm.image_url === imgItem.url
+                            ? 'ring-2 ring-emerald-500 border-emerald-500 scale-95 shadow-sm'
+                            : 'border-slate-200 hover:opacity-80'
+                        }`}
+                        title={`GitHub: ${imgItem.name}`}
+                      >
+                        <img
+                          src={imgItem.url}
+                          alt={imgItem.name}
+                          className="w-full h-full object-cover rounded"
+                          onError={e => {
+                            e.target.src = 'https://images.unsplash.com/photo-1527842891421-42eec6e703ea?w=200';
+                          }}
+                        />
+                        <span className="absolute bottom-0 right-0 bg-emerald-700/90 text-white text-[8px] font-bold px-1 rounded-tl leading-tight">
+                          git
+                        </span>
+                      </button>
+                    ))}
+
+                    {/* Presets iniciales */}
                     {PRESET_IMAGES.map((preset, idx) => (
                       <button
                         type="button"
-                        key={idx}
+                        key={`preset-${idx}`}
                         onClick={() => setProductForm({ ...productForm, image_url: preset.url })}
                         className={`relative rounded-lg overflow-hidden border aspect-square p-0.5 transition-all ${
                           productForm.image_url === preset.url
-                            ? 'ring-2 ring-emerald-500 border-emerald-500 scale-95'
+                            ? 'ring-2 ring-emerald-500 border-emerald-500 scale-95 shadow-sm'
                             : 'border-slate-200 hover:opacity-80'
                         }`}
                         title={preset.label}
