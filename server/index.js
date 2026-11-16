@@ -445,7 +445,7 @@ app.put('/api/settings/rate', async (req, res) => {
 
 // Servir frontend compilado en producción
 app.use(express.static(path.join(__dirname, '../dist')));
-app.get('*', (req, res) => {
+app.use((req, res) => {
   res.sendFile(path.join(__dirname, '../dist/index.html'));
 });
 
