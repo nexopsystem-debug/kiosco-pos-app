@@ -71,8 +71,28 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Todos');
 
-  // Carrito / Cantidades seleccionadas { [productId]: quantity }
-  const [cart, setCart] = useState({});
+  // Carrito / Cantidades seleccionadas { [productId]: quantity } con persistencia en localStorage
+  const [cart, setCart] = useState(() => {
+    try {
+      const saved = localStorage.getItem('kiosco_active_cart');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  // Persistir carrito activo para que no se pierda al recargar la página o cerrar navegador
+  useEffect(() => {
+    try {
+      if (Object.keys(cart).length === 0) {
+        localStorage.removeItem('kiosco_active_cart');
+      } else {
+        localStorage.setItem('kiosco_active_cart', JSON.stringify(cart));
+      }
+    } catch (e) {
+      console.warn('Error al respaldar carrito localmente:', e);
+    }
+  }, [cart]);
 
   // Modales
   const [showPaymentModal, setShowPaymentModal] = useState(false);
