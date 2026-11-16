@@ -232,32 +232,59 @@ app.get('/api/sales', async (req, res) => {
   }
 });
 
+// Helper para hora de Venezuela (UTC-4)
+function getVenezuelaTime() {
+  const d = new Date();
+  const utc = d.getTime() + (d.getTimezoneOffset() * 60000);
+  return new Date(utc - (4 * 3600000));
+}
+
+function formatDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function formatTime(date) {
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  const seconds = String(date.getSeconds()).padStart(2, '0');
+  return `${hours}:${minutes}:${seconds}`;
+}
+
 // ==========================================
 // 3. REPORTES DE VENTAS & CIERRES
 // ==========================================
 
 app.get('/api/reports/summary', async (req, res) => {
   try {
-    const { shift } = req.query; // 'day' (08:00-17:30), 'night' (18:00-22:00), 'live' (18:00-now), 'today'
-    const now = new Date();
-    const todayStr = now.toISOString().split('T')[0];
+    const { shift } = req.query; // 'day', 'night', 'live', 'today'
+    const vzla = getVenezuelaTime();
+    const todayStr = formatDate(vzla);
+    const timeStr = formatTime(vzla);
 
-    let startTime = `${todayStr} 00:00:00`;
-    let endTime = `${todayStr} 23:59:59`;
+    let startTime = `${todayStr} 00:00:00-04`;
+    let endTime = `${todayStr} 23:59:59-04`;
     let shiftLabel = 'Día Completo';
 
     if (shift === 'day') {
-      startTime = `${todayStr} 08:00:00`;
-      endTime = `${todayStr} 17:30:00`;
+      startTime = `${todayStr} 08:00:00-04`;
+      endTime = `${todayStr} 17:30:00-04`;
       shiftLabel = 'Turno 1 (08:00 - 17:30)';
     } else if (shift === 'night') {
-      startTime = `${todayStr} 18:00:00`;
-      endTime = `${todayStr} 22:00:00`;
+      startTime = `${todayStr} 18:00:00-04`;
+      endTime = `${todayStr} 22:00:00-04`;
       shiftLabel = 'Turno 2 (18:00 - 22:00)';
     } else if (shift === 'live') {
-      startTime = `${todayStr} 18:00:00`;
-      const timeStr = now.toTimeString().split(' ')[0];
-      endTime = `${todayStr} ${timeStr}`;
+      // Si son entre las 00:00 y las 06:00, las 18:00 fue ayer
+      if (vzla.getHours() < 6) {
+        const yesterday = new Date(vzla.getTime() - 24 * 3600000);
+        startTime = `${formatDate(yesterday)} 18:00:00-04`;
+      } else {
+        startTime = `${todayStr} 18:00:00-04`;
+      }
+      endTime = `${todayStr} ${timeStr}-04`;
       shiftLabel = `Turno Noche Extendido (18:00 hasta ${timeStr.slice(0, 5)})`;
     }
 
@@ -267,7 +294,7 @@ app.get('/api/reports/summary', async (req, res) => {
               COALESCE(SUM(total_usd), 0) as total_usd,
               COALESCE(SUM(total_bs), 0) as total_bs
        FROM sales
-       WHERE created_at >= $1 AND created_at <= $2`,
+       WHERE created_at >= $1::timestamptz AND created_at <= $2::timestamptz`,
       [startTime, endTime]
     );
 
@@ -279,7 +306,7 @@ app.get('/api/reports/summary', async (req, res) => {
               COALESCE(SUM(p.amount_bs), 0) as sum_bs
        FROM sale_payments p
        JOIN sales s ON p.sale_id = s.id
-       WHERE s.created_at >= $1 AND s.created_at <= $2
+       WHERE s.created_at >= $1::timestamptz AND s.created_at <= $2::timestamptz
        GROUP BY p.payment_method`,
       [startTime, endTime]
     );
@@ -291,7 +318,7 @@ app.get('/api/reports/summary', async (req, res) => {
               SUM(i.subtotal_usd) as total_usd
        FROM sale_items i
        JOIN sales s ON i.sale_id = s.id
-       WHERE s.created_at >= $1 AND s.created_at <= $2
+       WHERE s.created_at >= $1::timestamptz AND s.created_at <= $2::timestamptz
        GROUP BY i.product_name
        ORDER BY total_qty DESC
        LIMIT 5`,
@@ -323,22 +350,27 @@ app.get('/api/reports/summary', async (req, res) => {
 app.post('/api/reports/request-telegram', async (req, res) => {
   try {
     const { shift = 'live' } = req.body;
-    const now = new Date();
-    const todayStr = now.toISOString().split('T')[0];
+    const vzla = getVenezuelaTime();
+    const todayStr = formatDate(vzla);
+    const timeStr = formatTime(vzla);
 
-    let startTime = `${todayStr} 18:00:00`;
-    const timeStr = now.toTimeString().split(' ')[0];
-    let endTime = `${todayStr} ${timeStr}`;
+    let startTime = `${todayStr} 18:00:00-04`;
+    let endTime = `${todayStr} ${timeStr}-04`;
     let shiftLabel = `Turno Extendido (18:00 - ${timeStr.slice(0, 5)})`;
 
     if (shift === 'day') {
-      startTime = `${todayStr} 08:00:00`;
-      endTime = `${todayStr} 17:30:00`;
+      startTime = `${todayStr} 08:00:00-04`;
+      endTime = `${todayStr} 17:30:00-04`;
       shiftLabel = 'Turno 1 (08:00 - 17:30)';
     } else if (shift === 'night') {
-      startTime = `${todayStr} 18:00:00`;
-      endTime = `${todayStr} 22:00:00`;
+      startTime = `${todayStr} 18:00:00-04`;
+      endTime = `${todayStr} 22:00:00-04`;
       shiftLabel = 'Turno 2 (18:00 - 22:00)';
+    } else if (shift === 'live') {
+      if (vzla.getHours() < 6) {
+        const yesterday = new Date(vzla.getTime() - 24 * 3600000);
+        startTime = `${formatDate(yesterday)} 18:00:00-04`;
+      }
     }
 
     const salesRes = await db.query(
@@ -346,7 +378,7 @@ app.post('/api/reports/request-telegram', async (req, res) => {
               COALESCE(SUM(total_usd), 0) as total_usd,
               COALESCE(SUM(total_bs), 0) as total_bs
        FROM sales
-       WHERE created_at >= $1 AND created_at <= $2`,
+       WHERE created_at >= $1::timestamptz AND created_at <= $2::timestamptz`,
       [startTime, endTime]
     );
 
@@ -356,7 +388,7 @@ app.post('/api/reports/request-telegram', async (req, res) => {
               COALESCE(SUM(p.amount_bs), 0) as sum_bs
        FROM sale_payments p
        JOIN sales s ON p.sale_id = s.id
-       WHERE s.created_at >= $1 AND s.created_at <= $2
+       WHERE s.created_at >= $1::timestamptz AND s.created_at <= $2::timestamptz
        GROUP BY p.payment_method`,
       [startTime, endTime]
     );
