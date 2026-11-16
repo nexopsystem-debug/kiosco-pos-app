@@ -97,5 +97,14 @@
     "stock": 20,
     "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/1000398312-1794802137423.jpg",
     "is_active": true
+  },
+  {
+    "id": 21,
+    "name": "Cigarros Lucky Strike Rojo Detallado",
+    "category": "Cigarros",
+    "price_usd": 0.3,
+    "stock": 20,
+    "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/1000398311-1794802171010.jpg",
+    "is_active": true
   }
 ]
