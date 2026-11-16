@@ -879,6 +879,137 @@ app.get('/api/reports/summary', async (req, res) => {
   }
 });
 
+// Endpoint detallado de Contabilidad en tiempo real (todos los productos vendidos + totales en $ y Bs)
+app.get('/api/reports/accounting', async (req, res) => {
+  try {
+    const { period = 'today' } = req.query; // 'today', 'day', 'night', 'live', 'all'
+    const vzla = getVenezuelaTime();
+    const todayStr = formatDate(vzla);
+    const timeStr = formatTime(vzla);
+
+    let startTime = `${todayStr} 00:00:00-04`;
+    let endTime = `${todayStr} 23:59:59-04`;
+    let periodLabel = 'Hoy (Día Completo)';
+
+    if (period === 'day') {
+      startTime = `${todayStr} 08:00:00-04`;
+      endTime = `${todayStr} 17:30:00-04`;
+      periodLabel = 'Turno 1 (08:00 - 17:30)';
+    } else if (period === 'night') {
+      startTime = `${todayStr} 18:00:00-04`;
+      endTime = `${todayStr} 22:00:00-04`;
+      periodLabel = 'Turno 2 (18:00 - 22:00)';
+    } else if (period === 'live') {
+      if (vzla.getHours() < 6) {
+        const yesterday = new Date(vzla.getTime() - 24 * 3600000);
+        startTime = `${formatDate(yesterday)} 18:00:00-04`;
+      } else {
+        startTime = `${todayStr} 18:00:00-04`;
+      }
+      endTime = `${todayStr} ${timeStr}-04`;
+      periodLabel = `Turno Extendido (18:00 hasta ${timeStr.slice(0, 5)})`;
+    } else if (period === 'all') {
+      startTime = '2020-01-01 00:00:00-04';
+      endTime = `${todayStr} 23:59:59-04`;
+      periodLabel = 'Todo el Histórico Acumulado';
+    }
+
+    // 1. Resumen global de ventas
+    const salesRes = await db.query(
+      `SELECT COUNT(*) as total_sales,
+              COALESCE(SUM(total_usd), 0) as total_usd,
+              COALESCE(SUM(total_bs), 0) as total_bs,
+              COALESCE(SUM(items_count), 0) as total_items
+       FROM sales
+       WHERE created_at >= $1::timestamptz AND created_at <= $2::timestamptz`,
+      [startTime, endTime]
+    );
+
+    // 2. Desglose por método de pago
+    const payRes = await db.query(
+      `SELECT p.payment_method,
+              COUNT(*) as count,
+              COALESCE(SUM(p.amount_usd), 0) as sum_usd,
+              COALESCE(SUM(p.amount_bs), 0) as sum_bs
+       FROM sale_payments p
+       JOIN sales s ON p.sale_id = s.id
+       WHERE s.created_at >= $1::timestamptz AND s.created_at <= $2::timestamptz
+       GROUP BY p.payment_method
+       ORDER BY sum_usd DESC`,
+      [startTime, endTime]
+    );
+
+    // 3. Detalle completo de productos vendidos en el período
+    const productsSoldRes = await db.query(
+      `SELECT COALESCE(p.id, i.product_id) as product_id,
+              i.product_name,
+              COALESCE(p.category, 'Varios') as category,
+              COALESCE(p.image_url, '') as image_url,
+              SUM(i.quantity)::int as total_quantity,
+              ROUND(AVG(i.unit_price_usd), 2)::numeric as unit_price_usd,
+              ROUND(SUM(i.subtotal_usd), 2)::numeric as total_usd,
+              ROUND(SUM(i.subtotal_usd * COALESCE(s.exchange_rate, 1000)), 2)::numeric as total_bs
+       FROM sale_items i
+       JOIN sales s ON i.sale_id = s.id
+       LEFT JOIN products p ON i.product_id = p.id
+       WHERE s.created_at >= $1::timestamptz AND s.created_at <= $2::timestamptz
+       GROUP BY COALESCE(p.id, i.product_id), i.product_name, p.category, p.image_url
+       ORDER BY total_usd DESC, total_quantity DESC`,
+      [startTime, endTime]
+    );
+
+    // 4. Últimas ventas del período
+    const recentSalesRes = await db.query(
+      `SELECT s.id, s.sale_number, s.total_usd, s.total_bs, s.items_count, s.created_at,
+              COALESCE(json_agg(DISTINCT jsonb_build_object('method', p.payment_method, 'usd', p.amount_usd, 'bs', p.amount_bs)) FILTER (WHERE p.id IS NOT NULL), '[]') as payments
+       FROM sales s
+       LEFT JOIN sale_payments p ON s.id = p.sale_id
+       WHERE s.created_at >= $1::timestamptz AND s.created_at <= $2::timestamptz
+       GROUP BY s.id
+       ORDER BY s.created_at DESC
+       LIMIT 30`,
+      [startTime, endTime]
+    );
+
+    res.json({
+      success: true,
+      period: {
+        id: period,
+        label: periodLabel,
+        startTime,
+        endTime,
+        currentTime: `${todayStr} ${timeStr}`
+      },
+      summary: {
+        totalSales: parseInt(salesRes.rows[0].total_sales, 10),
+        totalUsd: parseFloat(salesRes.rows[0].total_usd),
+        totalBs: parseFloat(salesRes.rows[0].total_bs),
+        totalItemsSold: parseInt(salesRes.rows[0].total_items, 10),
+        paymentBreakdown: payRes.rows.map(r => ({
+          method: r.payment_method,
+          count: parseInt(r.count, 10),
+          sumUsd: parseFloat(r.sum_usd),
+          sumBs: parseFloat(r.sum_bs)
+        }))
+      },
+      productsSold: productsSoldRes.rows.map(r => ({
+        productId: r.product_id,
+        productName: r.product_name,
+        category: r.category,
+        imageUrl: r.image_url,
+        totalQuantity: parseInt(r.total_quantity, 10),
+        unitPriceUsd: parseFloat(r.unit_price_usd),
+        unitPriceBs: parseFloat((parseFloat(r.unit_price_usd) * 1000).toFixed(2)),
+        totalUsd: parseFloat(r.total_usd),
+        totalBs: parseFloat(r.total_bs)
+      })),
+      recentSales: recentSalesRes.rows
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Disparar reporte manual a N8N / Telegram
 app.post('/api/reports/request-telegram', async (req, res) => {
   try {

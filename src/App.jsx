@@ -30,7 +30,11 @@ import {
   Check,
   Tag,
   Camera,
-  Image as ImageIcon
+  Image as ImageIcon,
+  BarChart3,
+  TrendingUp,
+  Calendar,
+  ArrowUpRight
 } from 'lucide-react';
 
 const PRESET_IMAGES = [
@@ -113,6 +117,13 @@ export default function App() {
   const [reportLoading, setReportLoading] = useState(false);
   const [telegramStatus, setTelegramStatus] = useState('');
 
+  // Estados de Contabilidad en Tiempo Real
+  const [accountingPeriod, setAccountingPeriod] = useState('today'); // 'today', 'day', 'night', 'live', 'all'
+  const [accountingData, setAccountingData] = useState(null);
+  const [accountingLoading, setAccountingLoading] = useState(false);
+  const [accountingSearch, setAccountingSearch] = useState('');
+  const [accountingCategory, setAccountingCategory] = useState('Todos');
+
   // Toast Helper
   const showToast = (msg) => {
     setToastMessage(msg);
@@ -166,11 +177,44 @@ export default function App() {
     }
   };
 
+  // Cargar reporte de contabilidad en tiempo real
+  const loadAccountingReport = async (period = accountingPeriod) => {
+    try {
+      setAccountingLoading(true);
+      const res = await fetch(`/api/reports/accounting?period=${period}`);
+      const data = await res.json();
+      if (data.success) {
+        setAccountingData(data);
+      }
+    } catch (err) {
+      console.warn('Error al cargar datos contables:', err);
+    } finally {
+      setAccountingLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadProducts();
     loadRecentImages();
     loadCategories();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'accounting') {
+      loadAccountingReport(accountingPeriod);
+    }
+  }, [activeTab, accountingPeriod]);
+
+  // Productos vendidos filtrados en contabilidad
+  const filteredAccountingProducts = useMemo(() => {
+    if (!accountingData?.productsSold) return [];
+    return accountingData.productsSold.filter(p => {
+      const matchesSearch = p.productName.toLowerCase().includes(accountingSearch.toLowerCase()) ||
+                            p.category.toLowerCase().includes(accountingSearch.toLowerCase());
+      const matchesCategory = accountingCategory === 'Todos' || p.category === accountingCategory;
+      return matchesSearch && matchesCategory;
+    });
+  }, [accountingData, accountingSearch, accountingCategory]);
 
   // Categorías dinámicas unificadas para filtros
   const categories = useMemo(() => {
@@ -320,6 +364,7 @@ export default function App() {
         setShowSuccessModal(true);
         setCart({});
         loadProducts(); // Actualizar inventario en vivo
+        loadAccountingReport(accountingPeriod); // Actualizar contabilidad en tiempo real
       } else {
         alert('Error al registrar venta: ' + data.error);
       }
@@ -665,11 +710,11 @@ export default function App() {
             </div>
           </div>
 
-          {/* Selector de Vistas: Venta (POS) vs Almacén (Inventario) */}
+          {/* Selector de Vistas: Venta (POS) vs Almacén (Inventario) vs Contabilidad */}
           <div className="flex bg-slate-800 p-1 rounded-xl border border-slate-700 shadow-inner">
             <button
               onClick={() => setActiveTab('pos')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs md:text-sm font-bold flex items-center gap-1.5 transition-all ${
+              className={`px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs md:text-sm font-bold flex items-center gap-1.5 transition-all ${
                 activeTab === 'pos'
                   ? 'bg-emerald-500 text-slate-950 shadow-sm'
                   : 'text-slate-300 hover:text-white'
@@ -685,7 +730,7 @@ export default function App() {
             </button>
             <button
               onClick={() => setActiveTab('inventory')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs md:text-sm font-bold flex items-center gap-1.5 transition-all ${
+              className={`px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs md:text-sm font-bold flex items-center gap-1.5 transition-all ${
                 activeTab === 'inventory'
                   ? 'bg-emerald-500 text-slate-950 shadow-sm'
                   : 'text-slate-300 hover:text-white'
@@ -693,6 +738,17 @@ export default function App() {
             >
               <Warehouse className="w-4 h-4" />
               <span>Almacén</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('accounting')}
+              className={`px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs md:text-sm font-bold flex items-center gap-1.5 transition-all ${
+                activeTab === 'accounting'
+                  ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              <BarChart3 className="w-4 h-4" />
+              <span>Contabilidad</span>
             </button>
           </div>
 
@@ -706,44 +762,48 @@ export default function App() {
           </div>
         </div>
 
-        {/* Barra de Búsqueda Común */}
-        <div className="max-w-6xl mx-auto mt-2.5">
-          <div className="relative">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              placeholder={activeTab === 'pos' ? "Buscar producto para vender..." : "Buscar producto en almacén..."}
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              className="w-full bg-slate-800/90 text-white placeholder-slate-400 pl-10 pr-9 py-2 rounded-xl text-xs sm:text-sm border border-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-        </div>
+        {/* Barra de Búsqueda y Categorías (Solo en Venta y Almacén) */}
+        {activeTab !== 'accounting' && (
+          <>
+            <div className="max-w-6xl mx-auto mt-2.5">
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder={activeTab === 'pos' ? "Buscar producto para vender..." : "Buscar producto en almacén..."}
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  className="w-full bg-slate-800/90 text-white placeholder-slate-400 pl-10 pr-9 py-2 rounded-xl text-xs sm:text-sm border border-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            </div>
 
-        {/* Categorías Táctiles (Scroll Horizontal) */}
-        <div className="max-w-6xl mx-auto mt-2 flex space-x-2 overflow-x-auto pb-1 scrollbar-none">
-          {categories.map(cat => (
-            <button
-              key={cat}
-              onClick={() => setSelectedCategory(cat)}
-              className={`px-3 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-all active:scale-95 ${
-                selectedCategory === cat
-                  ? 'bg-emerald-500 text-slate-950 shadow-sm'
-                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700/60'
-              }`}
-            >
-              {cat}
-            </button>
-          ))}
-        </div>
+            {/* Categorías Táctiles (Scroll Horizontal) */}
+            <div className="max-w-6xl mx-auto mt-2 flex space-x-2 overflow-x-auto pb-1 scrollbar-none">
+              {categories.map(cat => (
+                <button
+                  key={cat}
+                  onClick={() => setSelectedCategory(cat)}
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-all active:scale-95 ${
+                    selectedCategory === cat
+                      ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                      : 'bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700/60'
+                  }`}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
       </header>
 
       {/* ============================================================ */}
@@ -806,15 +866,15 @@ export default function App() {
                       </div>
                     )}
 
-                    {/* Imagen y Click para sumar */}
+                    {/* Imagen y Click para sumar (Contenedor 1:1 Cuadrado Centrado) */}
                     <div
                       onClick={() => updateQuantity(product.id, 1)}
-                      className="relative cursor-pointer aspect-square bg-slate-100 overflow-hidden group select-none"
+                      className="relative cursor-pointer aspect-square bg-slate-100 overflow-hidden group select-none flex items-center justify-center"
                     >
                       <img
                         src={product.image_url || 'https://images.unsplash.com/photo-1527842891421-42eec6e703ea?w=400'}
                         alt={product.name}
-                        className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                        className="w-full h-full object-cover object-center transition-transform duration-300 group-hover:scale-105"
                         loading="lazy"
                       />
                       <div className="absolute inset-0 bg-black/10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
@@ -990,13 +1050,15 @@ export default function App() {
                     key={product.id}
                     className="bg-white rounded-2xl p-3 sm:p-4 border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 transition-all hover:border-slate-300"
                   >
-                    {/* Imagen e Info */}
+                    {/* Imagen 1:1 Cuadrada Centrada e Info */}
                     <div className="flex items-center gap-3 w-full sm:w-auto">
-                      <img
-                        src={product.image_url || PRESET_IMAGES[0].url}
-                        alt={product.name}
-                        className="w-16 h-16 sm:w-14 sm:h-14 rounded-xl object-cover bg-slate-100 border border-slate-200 flex-shrink-0"
-                      />
+                      <div className="w-16 h-16 sm:w-14 sm:h-14 aspect-square rounded-2xl overflow-hidden bg-slate-100 border border-slate-200 shrink-0 flex items-center justify-center">
+                        <img
+                          src={product.image_url || PRESET_IMAGES[0].url}
+                          alt={product.name}
+                          className="w-full h-full object-cover object-center"
+                        />
+                      </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="text-[10px] bg-slate-100 text-slate-600 font-bold px-2 py-0.5 rounded-md uppercase">
@@ -1067,6 +1129,339 @@ export default function App() {
                   </div>
                 );
               })}
+            </div>
+          )}
+        </main>
+      )}
+
+      {/* ============================================================ */}
+      {/* 4. VISTA C: CONTABILIDAD Y REPORTE FINANCIERO EN TIEMPO REAL */}
+      {/* ============================================================ */}
+      {activeTab === 'accounting' && (
+        <main className="max-w-6xl mx-auto w-full px-3 py-4 flex-1">
+          {/* Header de Contabilidad con Filtro de Períodos y Acciones */}
+          <div className="bg-white rounded-3xl p-4 sm:p-5 border border-slate-200 shadow-sm mb-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+              <div>
+                <div className="flex items-center gap-2">
+                  <BarChart3 className="w-6 h-6 text-emerald-600" />
+                  <h2 className="text-lg sm:text-xl font-black text-slate-800">
+                    Contabilidad en Tiempo Real
+                  </h2>
+                  <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    En Vivo
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Reporte de productos vendidos y monto total recaudado en $ USD y Bs al instante.
+                </p>
+              </div>
+
+              {/* Botones de Acción */}
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => loadAccountingReport(accountingPeriod)}
+                  disabled={accountingLoading}
+                  className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-xl text-xs flex items-center gap-1.5 border border-slate-700 transition-all active:scale-95 shadow-sm"
+                  title="Recargar reporte en vivo"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 text-emerald-400 ${accountingLoading ? 'animate-spin' : ''}`} />
+                  <span>{accountingLoading ? 'Actualizando...' : 'Actualizar'}</span>
+                </button>
+
+                <button
+                  onClick={handleOpenReport}
+                  className="px-3.5 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black rounded-xl text-xs flex items-center gap-1.5 shadow-md shadow-emerald-500/20 transition-all active:scale-95"
+                  title="Solicitar reporte para Telegram"
+                >
+                  <Send className="w-3.5 h-3.5 text-slate-950" />
+                  <span>Solicitar Reporte</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Selector de Período / Turno */}
+            <div className="mt-3 flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+              {[
+                { id: 'today', label: 'Hoy (Día Completo)' },
+                { id: 'day', label: 'Turno 1 (08:00 - 17:30)' },
+                { id: 'night', label: 'Turno 2 (18:00 - 22:00)' },
+                { id: 'live', label: 'Turno Extendido' },
+                { id: 'all', label: 'Todo el Histórico' },
+              ].map(p => (
+                <button
+                  key={p.id}
+                  onClick={() => setAccountingPeriod(p.id)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all active:scale-95 ${
+                    accountingPeriod === p.id
+                      ? 'bg-slate-900 text-emerald-400 shadow-sm border border-slate-800'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200/80'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Tarjetas KPI de Totales ($ y Bs) */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3.5 mt-4">
+              {/* Total $ USD */}
+              <div className="bg-gradient-to-br from-emerald-50 to-emerald-100/40 p-3.5 rounded-2xl border border-emerald-200/70 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-emerald-800 font-bold uppercase tracking-wider">
+                    Total Vendido ($)
+                  </span>
+                  <DollarSign className="w-4 h-4 text-emerald-600" />
+                </div>
+                <div className="text-xl sm:text-2xl font-black text-emerald-700 font-mono mt-1">
+                  ${(accountingData?.summary?.totalUsd || 0).toFixed(2)}
+                </div>
+                <span className="text-[10px] text-emerald-600 font-semibold block mt-0.5">
+                  Tasa fija: 1.000 Bs/$
+                </span>
+              </div>
+
+              {/* Total Bs */}
+              <div className="bg-gradient-to-br from-blue-50 to-indigo-100/40 p-3.5 rounded-2xl border border-blue-200/70 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-blue-800 font-bold uppercase tracking-wider">
+                    Total Vendido (Bs)
+                  </span>
+                  <Coins className="w-4 h-4 text-blue-600" />
+                </div>
+                <div className="text-xl sm:text-2xl font-black text-blue-700 font-mono mt-1">
+                  Bs. {(accountingData?.summary?.totalBs || 0).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <span className="text-[10px] text-blue-600 font-semibold block mt-0.5">
+                  Moneda nacional
+                </span>
+              </div>
+
+              {/* Unidades Vendidas */}
+              <div className="bg-gradient-to-br from-amber-50 to-amber-100/40 p-3.5 rounded-2xl border border-amber-200/70 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-amber-800 font-bold uppercase tracking-wider">
+                    Unidades Vendidas
+                  </span>
+                  <Package className="w-4 h-4 text-amber-600" />
+                </div>
+                <div className="text-xl sm:text-2xl font-black text-amber-800 font-mono mt-1">
+                  {accountingData?.summary?.totalItemsSold || 0} u.
+                </div>
+                <span className="text-[10px] text-amber-700 font-semibold block mt-0.5">
+                  Artículos despachados
+                </span>
+              </div>
+
+              {/* Tickets / Ventas Concretadas */}
+              <div className="bg-gradient-to-br from-slate-50 to-purple-50 p-3.5 rounded-2xl border border-slate-200 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-slate-600 font-bold uppercase tracking-wider">
+                    Ventas Concretadas
+                  </span>
+                  <Receipt className="w-4 h-4 text-purple-600" />
+                </div>
+                <div className="text-xl sm:text-2xl font-black text-slate-800 font-mono mt-1">
+                  {accountingData?.summary?.totalSales || 0}
+                </div>
+                <span className="text-[10px] text-slate-500 font-semibold block mt-0.5">
+                  Promedio: ${(
+                    accountingData?.summary?.totalSales
+                      ? (accountingData.summary.totalUsd / accountingData.summary.totalSales).toFixed(2)
+                      : '0.00'
+                  )} / venta
+                </span>
+              </div>
+            </div>
+
+            {/* Desglose de Métodos de Pago */}
+            <div className="mt-4 pt-3 border-t border-slate-100">
+              <span className="text-[11px] font-black text-slate-600 uppercase tracking-wider block mb-2">
+                Recaudación por Forma de Pago:
+              </span>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {[
+                  { key: 'Divisas', label: '💵 Divisas ($)', color: 'border-emerald-200 bg-emerald-50/50 text-emerald-800' },
+                  { key: 'Pago Móvil', label: '📱 Pago Móvil', color: 'border-blue-200 bg-blue-50/50 text-blue-800' },
+                  { key: 'Punto de Venta', label: '💳 Punto de Venta', color: 'border-purple-200 bg-purple-50/50 text-purple-800' },
+                  { key: 'Efectivo', label: '🪙 Efectivo Bs', color: 'border-amber-200 bg-amber-50/50 text-amber-800' },
+                ].map(method => {
+                  const found = accountingData?.summary?.paymentBreakdown?.find(p =>
+                    p.method.toLowerCase().includes(method.key.toLowerCase())
+                  );
+                  const sumUsd = found ? found.sumUsd : 0;
+                  const sumBs = found ? found.sumBs : 0;
+                  const count = found ? found.count : 0;
+
+                  return (
+                    <div key={method.key} className={`p-2.5 rounded-xl border ${method.color} flex flex-col justify-between`}>
+                      <span className="text-[10px] font-bold block">{method.label}</span>
+                      <div className="mt-1">
+                        <span className="text-sm font-black font-mono block">${sumUsd.toFixed(2)}</span>
+                        <span className="text-[10px] font-bold opacity-80 font-mono block">
+                          Bs. {sumBs.toLocaleString('es-VE')} ({count} ops)
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* Sección de Productos Vendidos en Tiempo Real */}
+          <div className="bg-white rounded-3xl p-4 sm:p-5 border border-slate-200 shadow-sm mb-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+              <div>
+                <h3 className="text-base font-black text-slate-800 flex items-center gap-2">
+                  <span>Productos Vendidos ({filteredAccountingProducts.length})</span>
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Unidades vendidas y monto recaudado en $ y Bs por cada producto
+                </p>
+              </div>
+
+              {/* Buscador dentro de Contabilidad */}
+              <div className="relative w-full sm:w-64">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Filtrar producto vendido..."
+                  value={accountingSearch}
+                  onChange={e => setAccountingSearch(e.target.value)}
+                  className="w-full bg-slate-100 text-slate-800 placeholder-slate-400 pl-8 pr-7 py-1.5 rounded-xl text-xs border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+                {accountingSearch && (
+                  <button
+                    onClick={() => setAccountingSearch('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Lista de Productos Vendidos */}
+            {accountingLoading ? (
+              <div className="py-12 text-center text-slate-400">
+                <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-2 text-emerald-500" />
+                <p className="text-xs">Cargando reporte de productos vendidos...</p>
+              </div>
+            ) : filteredAccountingProducts.length === 0 ? (
+              <div className="py-12 text-center">
+                <Package className="w-12 h-12 text-slate-300 mx-auto mb-2" />
+                <h4 className="text-sm font-bold text-slate-700">No hay ventas registradas en este período</h4>
+                <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
+                  Prueba cambiando el turno arriba a "Todo el Histórico" o realiza ventas en el Punto de Venta.
+                </p>
+                <button
+                  onClick={() => setActiveTab('pos')}
+                  className="mt-3 px-4 py-2 bg-emerald-500 text-slate-950 font-bold text-xs rounded-xl shadow-sm"
+                >
+                  Ir a Punto de Venta
+                </button>
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-100 mt-2">
+                {filteredAccountingProducts.map((p, idx) => (
+                  <div
+                    key={`${p.productId || idx}-${p.productName}`}
+                    className="py-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 hover:bg-slate-50/70 px-2 rounded-2xl transition-all"
+                  >
+                    {/* Foto 1:1 Cuadrada Centrada y Nombres */}
+                    <div className="flex items-center gap-3 w-full sm:w-auto">
+                      <div className="w-14 h-14 sm:w-16 sm:h-16 aspect-square rounded-2xl overflow-hidden bg-slate-100 border border-slate-200 shrink-0 flex items-center justify-center shadow-inner">
+                        <img
+                          src={p.imageUrl || PRESET_IMAGES[0].url}
+                          alt={p.productName}
+                          className="w-full h-full object-cover object-center"
+                          onError={e => {
+                            e.target.src = 'https://images.unsplash.com/photo-1527842891421-42eec6e703ea?w=200';
+                          }}
+                        />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[10px] bg-slate-100 text-slate-600 font-bold px-2 py-0.5 rounded-md uppercase">
+                            {p.category}
+                          </span>
+                          <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-md">
+                            {p.totalQuantity} {p.totalQuantity === 1 ? 'unidad' : 'unidades'}
+                          </span>
+                        </div>
+                        <h4 className="text-sm font-black text-slate-800 truncate mt-0.5">
+                          {p.productName}
+                        </h4>
+                        <span className="text-[11px] text-slate-400 font-mono block mt-0.5">
+                          P. Unit: ${p.unitPriceUsd.toFixed(2)} / {p.unitPriceBs.toLocaleString('es-VE')} Bs
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Total Recaudado por Producto ($ y Bs) */}
+                    <div className="flex items-center justify-between w-full sm:w-auto gap-4 pl-16 sm:pl-0">
+                      <div className="text-left sm:text-right">
+                        <span className="text-[10px] text-slate-400 font-bold uppercase block leading-none">
+                          Subtotal Recaudado
+                        </span>
+                        <div className="text-base sm:text-lg font-black text-emerald-600 font-mono mt-0.5">
+                          ${p.totalUsd.toFixed(2)}
+                        </div>
+                        <div className="text-xs font-bold text-slate-500 font-mono">
+                          Bs. {p.totalBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Historial de Ventas Recientes en el Período */}
+          {accountingData?.recentSales && accountingData.recentSales.length > 0 && (
+            <div className="bg-white rounded-3xl p-4 sm:p-5 border border-slate-200 shadow-sm">
+              <h3 className="text-base font-black text-slate-800 mb-3 flex items-center gap-2">
+                <Receipt className="w-5 h-5 text-emerald-600" />
+                <span>Tickets de Venta Recientes ({accountingData.recentSales.length})</span>
+              </h3>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+                {accountingData.recentSales.map(sale => {
+                  const saleDate = new Date(sale.created_at);
+                  const timeFormatted = saleDate.toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' });
+                  return (
+                    <div key={sale.id} className="p-3 bg-slate-50 rounded-2xl border border-slate-200 text-xs">
+                      <div className="flex items-center justify-between pb-1.5 border-b border-slate-200">
+                        <span className="font-mono font-black text-slate-800">{sale.sale_number}</span>
+                        <span className="text-[10px] text-slate-400 font-bold">{timeFormatted}</span>
+                      </div>
+                      <div className="mt-2 flex items-baseline justify-between">
+                        <span className="text-[11px] text-slate-500 font-bold">{sale.items_count} items</span>
+                        <div className="text-right">
+                          <span className="font-mono font-black text-emerald-600 text-sm block">
+                            ${parseFloat(sale.total_usd).toFixed(2)}
+                          </span>
+                          <span className="font-mono text-[10px] text-slate-400 block">
+                            Bs. {parseFloat(sale.total_bs).toLocaleString('es-VE')}
+                          </span>
+                        </div>
+                      </div>
+                      {sale.payments && Array.isArray(sale.payments) && sale.payments.length > 0 && (
+                        <div className="mt-1.5 pt-1.5 border-t border-slate-200/60 flex items-center gap-1 flex-wrap">
+                          {sale.payments.map((pay, i) => (
+                            <span key={i} className="text-[9px] bg-white text-slate-600 px-1.5 py-0.5 rounded border border-slate-200 font-medium">
+                              {pay.method}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
         </main>
@@ -1320,17 +1715,19 @@ export default function App() {
                   )}
                 </div>
 
-                {/* Vista Previa de Imagen */}
+                {/* Vista Previa de Imagen (Contenedor 1:1 Cuadrado) */}
                 {productForm.image_url && (
                   <div className="mt-2 flex items-center gap-3 p-2 bg-slate-50 rounded-xl border border-slate-200">
-                    <img
-                      src={productForm.image_url}
-                      alt="Vista previa"
-                      className="w-14 h-14 object-cover rounded-lg bg-slate-200 border shrink-0"
-                      onError={e => {
-                        e.target.src = 'https://images.unsplash.com/photo-1527842891421-42eec6e703ea?w=200';
-                      }}
-                    />
+                    <div className="w-14 h-14 aspect-square rounded-xl overflow-hidden bg-slate-200 border border-slate-300 shrink-0 flex items-center justify-center">
+                      <img
+                        src={productForm.image_url}
+                        alt="Vista previa"
+                        className="w-full h-full object-cover object-center"
+                        onError={e => {
+                          e.target.src = 'https://images.unsplash.com/photo-1527842891421-42eec6e703ea?w=200';
+                        }}
+                      />
+                    </div>
                     <div className="flex-1 min-w-0">
                       <span className="text-[10px] text-slate-400 font-bold block">Vista previa activa</span>
                       <span className="text-xs font-bold text-slate-700 truncate block">
