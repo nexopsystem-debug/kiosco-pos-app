@@ -124,5 +124,14 @@
     "stock": 10,
     "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/1000407140-1795576933489.jpg",
     "is_active": true
+  },
+  {
+    "id": 26,
+    "name": "Caja de Bohem Rojo",
+    "category": "Cigarros",
+    "price_usd": 2.2,
+    "stock": 6,
+    "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/1000407144-1795576972983.jpg",
+    "is_active": true
   }
 ]
