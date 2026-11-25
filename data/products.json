@@ -268,5 +268,14 @@
     "stock": 10,
     "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/product_photography_on_white_p-1795579640516.jpg",
     "is_active": true
+  },
+  {
+    "id": 42,
+    "name": "Jacks Chicharron",
+    "category": "Snacks",
+    "price_usd": 2.5,
+    "stock": 3,
+    "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/product_on_studio_podium_b4d32-1795579726016.jpg",
+    "is_active": true
   }
 ]
