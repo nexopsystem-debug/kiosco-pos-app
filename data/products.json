@@ -376,5 +376,14 @@
     "stock": 20,
     "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/studio_product_photography_on_-1795581466467.jpg",
     "is_active": true
+  },
+  {
+    "id": 54,
+    "name": "Glup Uva Pequeño",
+    "category": "Bebidas",
+    "price_usd": 0.8,
+    "stock": 20,
+    "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/product_on_studio_podium_f664b-1795581777314.jpg",
+    "is_active": true
   }
 ]
