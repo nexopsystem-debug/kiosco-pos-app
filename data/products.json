@@ -484,5 +484,14 @@
     "stock": 20,
     "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/product_on_studio_podium_c9157-1795582263800.jpg",
     "is_active": true
+  },
+  {
+    "id": 66,
+    "name": "Bolibomba Menta",
+    "category": "Chicles",
+    "price_usd": 0.6,
+    "stock": 20,
+    "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/studio_product_photography_on_-1795582510157.jpg",
+    "is_active": true
   }
 ]
