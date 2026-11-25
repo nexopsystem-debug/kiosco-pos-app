@@ -34,10 +34,95 @@ async function getExchangeRate() {
   }
 }
 
+// --- Helper centralizado para configuración de GitHub con token y repo garantizados ---
+function getGithubConfig() {
+  const token = (process.env.GITHUB_TOKEN || '').trim();
+  let rawRepo = (process.env.GITHUB_REPO || 'nexopsystem-debug/kiosco-pos-app').trim();
+  const owner = (process.env.GITHUB_OWNER || 'nexopsystem-debug').trim();
+
+  // Si solo pasaron el nombre del repositorio sin usuario (ej: 'kiosco-pos-app')
+  if (!rawRepo.includes('/')) {
+    rawRepo = `${owner}/${rawRepo}`;
+  }
+
+  return { token, repo: rawRepo };
+}
+
+// Helper para asegurar que una imagen cargada localmente esté respaldada en GitHub
+async function ensureImageInGithub(imageUrl) {
+  if (!imageUrl || typeof imageUrl !== 'string') return imageUrl;
+  
+  const { token, repo } = getGithubConfig();
+
+  // Corregir si viene con el repo viejo sin usuario
+  let cleanUrl = imageUrl.replace(
+    'raw.githubusercontent.com/kiosco-pos-app/',
+    `raw.githubusercontent.com/${repo}/`
+  );
+
+  let filename = null;
+  if (cleanUrl.startsWith('/uploads/')) {
+    filename = cleanUrl.replace('/uploads/', '').trim();
+  } else if (cleanUrl.includes('/public/uploads/')) {
+    filename = cleanUrl.split('/public/uploads/').pop().split('?')[0].trim();
+  } else if (cleanUrl.includes('/uploads/')) {
+    filename = cleanUrl.split('/uploads/').pop().split('?')[0].trim();
+  }
+
+  if (!filename) return cleanUrl;
+
+  const targetUploadDir = path.join(__dirname, '../public/uploads');
+  const localFilePath = path.join(targetUploadDir, filename);
+
+  if (fs.existsSync(localFilePath) && token) {
+    try {
+      const ghPath = `public/uploads/${filename}`;
+      const apiUrl = `https://api.github.com/repos/${repo}/contents/${ghPath}`;
+
+      // Verificar si ya existe en GitHub
+      const checkRes = await fetch(apiUrl, {
+        headers: {
+          'Authorization': `token ${token}`,
+          'User-Agent': 'Kiosco-POS-App',
+          'Accept': 'application/vnd.github.v3+json'
+        }
+      });
+
+      if (!checkRes.ok) {
+        const buffer = fs.readFileSync(localFilePath);
+        const putRes = await fetch(apiUrl, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `token ${token}`,
+            'User-Agent': 'Kiosco-POS-App',
+            'Content-Type': 'application/json',
+            'Accept': 'application/vnd.github.v3+json'
+          },
+          body: JSON.stringify({
+            message: `feat(upload): sincronizar imagen de producto ${filename} [skip ci]`,
+            content: buffer.toString('base64'),
+            branch: 'main'
+          })
+        });
+        if (putRes.ok) {
+          const putData = await putRes.json();
+          console.log(`✅ Imagen ${filename} sincronizada exitosamente con GitHub:`, putData.commit?.html_url);
+        } else {
+          console.warn(`⚠️ Error al sincronizar ${filename} en GitHub:`, putRes.status);
+        }
+      }
+    } catch (err) {
+      console.warn(`⚠️ Excepción asegurando imagen ${filename} en GitHub:`, err.message);
+    }
+  }
+
+  // Devolver URL canónica de GitHub
+  return `https://raw.githubusercontent.com/${repo}/main/public/uploads/${filename}`;
+}
+
 // --- Helper para sincronizar productos con GitHub ---
 async function syncProductsToGithub() {
-  const token = process.env.GITHUB_TOKEN;
-  const repo = process.env.GITHUB_REPO || 'nexopsystem-debug/kiosco-pos-app';
+  const { token, repo } = getGithubConfig();
 
   try {
     // 1. Obtener todos los productos activos de la base de datos
@@ -132,8 +217,7 @@ async function syncProductsToGithub() {
 
 // --- Helper para sincronizar categorías con GitHub ---
 async function syncCategoriesToGithub() {
-  const token = process.env.GITHUB_TOKEN;
-  const repo = process.env.GITHUB_REPO || 'nexopsystem-debug/kiosco-pos-app';
+  const { token, repo } = getGithubConfig();
 
   try {
     const result = await db.query(
@@ -264,6 +348,12 @@ app.post('/api/products', async (req, res) => {
     if (!name || price_usd === undefined) {
       return res.status(400).json({ success: false, error: 'Nombre y precio son requeridos' });
     }
+
+    let finalImageUrl = image_url ? image_url.trim() : '';
+    if (finalImageUrl) {
+      finalImageUrl = await ensureImageInGithub(finalImageUrl);
+    }
+
     const result = await db.query(
       `INSERT INTO products (name, category, price_usd, stock, image_url, is_active, updated_at)
        VALUES ($1, $2, $3, $4, $5, true, CURRENT_TIMESTAMP) RETURNING *`,
@@ -272,7 +362,7 @@ app.post('/api/products', async (req, res) => {
         category ? category.trim() : 'Varios',
         parseFloat(price_usd),
         parseInt(stock, 10) || 0,
-        image_url ? image_url.trim() : ''
+        finalImageUrl
       ]
     );
 
@@ -297,6 +387,11 @@ app.put('/api/products/:id', async (req, res) => {
     const { id } = req.params;
     const { name, category, price_usd, stock, image_url, is_active } = req.body;
 
+    let finalImageUrl = image_url !== undefined ? image_url.trim() : null;
+    if (finalImageUrl) {
+      finalImageUrl = await ensureImageInGithub(finalImageUrl);
+    }
+
     const result = await db.query(
       `UPDATE products 
        SET name = COALESCE($1, name),
@@ -312,7 +407,7 @@ app.put('/api/products/:id', async (req, res) => {
         category !== undefined ? category.trim() : null,
         price_usd !== undefined ? parseFloat(price_usd) : null,
         stock !== undefined ? parseInt(stock, 10) : null,
-        image_url !== undefined ? image_url.trim() : null,
+        finalImageUrl,
         is_active,
         id
       ]
@@ -523,7 +618,7 @@ app.post('/api/upload-image', async (req, res) => {
       .slice(0, 30);
     const uniqueName = `${cleanBase}-${Date.now()}.${ext}`;
 
-    // 1. Guardar localmente
+    // 1. Guardar localmente de inmediato para disponibilidad instantánea (0ms)
     const targetUploadDir = path.join(__dirname, '../public/uploads');
     if (!fs.existsSync(targetUploadDir)) {
       fs.mkdirSync(targetUploadDir, { recursive: true });
@@ -532,9 +627,9 @@ app.post('/api/upload-image', async (req, res) => {
     fs.writeFileSync(localFilePath, buffer);
 
     // 2. Subir a GitHub en public/uploads/
-    const token = process.env.GITHUB_TOKEN;
-    const repo = process.env.GITHUB_REPO || 'nexopsystem-debug/kiosco-pos-app';
+    const { token, repo } = getGithubConfig();
     let commitUrl = null;
+    let gitUploaded = false;
 
     if (token) {
       try {
@@ -558,16 +653,18 @@ app.post('/api/upload-image', async (req, res) => {
         if (putRes.ok) {
           const putData = await putRes.json();
           commitUrl = putData.commit?.html_url;
-          console.log(' Imagen subida exitosamente a GitHub:', commitUrl);
+          gitUploaded = true;
+          console.log('✅ Imagen subida exitosamente a GitHub:', commitUrl);
         } else {
-          console.warn('⚠️ Error al subir imagen a GitHub:', putRes.status, await putRes.text());
+          const errBody = await putRes.text();
+          console.warn('⚠️ Error al subir imagen a GitHub:', putRes.status, errBody);
         }
       } catch (ghErr) {
         console.warn('⚠️ Excepción al subir imagen a GitHub:', ghErr.message);
       }
     }
 
-    // URLs accesibles
+    // URLs accesibles (raw de GitHub para persistencia, local para renderizado instantáneo)
     const rawGithubUrl = `https://raw.githubusercontent.com/${repo}/main/public/uploads/${uniqueName}`;
     const localUrl = `/uploads/${uniqueName}`;
 
@@ -576,6 +673,7 @@ app.post('/api/upload-image', async (req, res) => {
       filename: uniqueName,
       url: rawGithubUrl,
       localUrl,
+      gitUploaded,
       commitUrl
     });
   } catch (err) {
@@ -587,9 +685,9 @@ app.post('/api/upload-image', async (req, res) => {
 // Obtener las últimas imágenes cargadas en el repositorio
 app.get('/api/uploads/recent', async (req, res) => {
   try {
-    const token = process.env.GITHUB_TOKEN;
-    const repo = process.env.GITHUB_REPO || 'nexopsystem-debug/kiosco-pos-app';
+    const { token, repo } = getGithubConfig();
     const images = [];
+    const seenNames = new Set();
 
     // 1. Consultar uploads en GitHub
     if (token) {
@@ -610,9 +708,11 @@ app.get('/api/uploads/recent', async (req, res) => {
               .filter(f => f.type === 'file' && /\.(jpg|jpeg|png|webp|gif)$/i.test(f.name))
               .reverse() // Recientes primero
               .forEach(f => {
+                seenNames.add(f.name);
                 images.push({
                   name: f.name,
                   url: `https://raw.githubusercontent.com/${repo}/main/public/uploads/${f.name}`,
+                  localUrl: `/uploads/${f.name}`,
                   downloadUrl: f.download_url
                 });
               });
@@ -623,7 +723,7 @@ app.get('/api/uploads/recent', async (req, res) => {
       }
     }
 
-    // 2. Si hay archivos locales que aún no están en la lista
+    // 2. Si hay archivos locales que aún no están en la lista (o mientras GitHub propaga CDN)
     const targetUploadDir = path.join(__dirname, '../public/uploads');
     if (fs.existsSync(targetUploadDir)) {
       try {
@@ -632,10 +732,12 @@ app.get('/api/uploads/recent', async (req, res) => {
           .filter(f => /\.(jpg|jpeg|png|webp|gif)$/i.test(f))
           .reverse()
           .forEach(f => {
-            if (!images.some(img => img.name === f)) {
+            if (!seenNames.has(f)) {
+              seenNames.add(f);
               images.push({
                 name: f,
-                url: `/uploads/${f}`
+                url: `https://raw.githubusercontent.com/${repo}/main/public/uploads/${f}`,
+                localUrl: `/uploads/${f}`
               });
             }
           });
@@ -643,6 +745,12 @@ app.get('/api/uploads/recent', async (req, res) => {
         // Ignorar
       }
     }
+
+    res.json({ success: true, images: images.slice(0, 20) });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
     res.json({ success: true, images: images.slice(0, 15) });
   } catch (err) {

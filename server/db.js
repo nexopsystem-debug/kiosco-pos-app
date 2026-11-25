@@ -119,6 +119,13 @@ async function initDatabase() {
       WHERE sale_id = 2 AND payment_method LIKE '%Pago%' AND amount_usd = 1.40;
     `);
 
+    // Corrección de URLs malformadas en productos (reemplazar raw.githubusercontent.com/kiosco-pos-app/ por raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/)
+    await client.query(`
+      UPDATE products 
+      SET image_url = REPLACE(image_url, 'https://raw.githubusercontent.com/kiosco-pos-app/', 'https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/')
+      WHERE image_url LIKE '%raw.githubusercontent.com/kiosco-pos-app/%';
+    `);
+
     // Tabla de Histórico de Cierres de Caja Diarios
     await client.query(`
       CREATE TABLE IF NOT EXISTS daily_closings (

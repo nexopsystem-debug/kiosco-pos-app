@@ -1069,6 +1069,7 @@ export default function App() {
             : `✅ ${productForm.name} agregado y colocado al inicio del Almacén`
         );
         loadProducts(); // Actualización inmediata en tiempo real
+        loadRecentImages();
       } else {
         alert('Error: ' + data.error);
       }
@@ -1146,6 +1147,19 @@ export default function App() {
     });
   };
 
+  // Función auxiliar robusta para manejar errores de carga de imágenes (reintentar desde /uploads/ local antes del fallback)
+  const handleImageError = (e) => {
+    const currentSrc = e.currentTarget.src || '';
+    if (currentSrc.includes('/public/uploads/')) {
+      const filename = currentSrc.split('/public/uploads/').pop().split('?')[0];
+      if (filename && !currentSrc.endsWith('/uploads/' + filename)) {
+        e.currentTarget.src = `/uploads/${filename}`;
+        return;
+      }
+    }
+    e.currentTarget.src = 'https://images.unsplash.com/photo-1527842891421-42eec6e703ea?w=300';
+  };
+
   // Subir imagen desde el dispositivo y guardarla en el repositorio de GitHub
   const handleImageFileUpload = async (e) => {
     const file = e.target.files?.[0];
@@ -1168,8 +1182,8 @@ export default function App() {
       const data = await res.json();
       if (data.success) {
         setProductForm(prev => ({ ...prev, image_url: data.url }));
-        showToast('📸 Foto subida y guardada en GitHub con éxito');
-        loadRecentImages();
+        showToast('📸 Foto subida y respaldada en GitHub con éxito');
+        await loadRecentImages();
       } else {
         alert('Error al subir imagen: ' + (data.error || 'Desconocido'));
       }
@@ -1527,6 +1541,7 @@ export default function App() {
                         alt={product.name}
                         className="w-full h-full object-cover object-center transition-transform duration-300 group-hover:scale-105"
                         loading="lazy"
+                        onError={handleImageError}
                       />
                       {product.stock > 0 ? (
                         <div className="absolute inset-0 bg-black/10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
@@ -1743,6 +1758,7 @@ export default function App() {
                           src={product.image_url || PRESET_IMAGES[0].url}
                           alt={product.name}
                           className="w-full h-full object-cover object-center"
+                          onError={handleImageError}
                         />
                       </div>
                       <div className="flex-1 min-w-0">
@@ -2118,9 +2134,7 @@ export default function App() {
                           src={p.imageUrl || PRESET_IMAGES[0].url}
                           alt={p.productName}
                           className="w-full h-full object-cover object-center"
-                          onError={e => {
-                            e.target.src = 'https://images.unsplash.com/photo-1527842891421-42eec6e703ea?w=200';
-                          }}
+                          onError={handleImageError}
                         />
                       </div>
                       <div className="min-w-0 flex-1">
@@ -2583,9 +2597,7 @@ export default function App() {
                         src={productForm.image_url}
                         alt="Vista previa"
                         className="w-full h-full object-cover object-center"
-                        onError={e => {
-                          e.target.src = 'https://images.unsplash.com/photo-1527842891421-42eec6e703ea?w=200';
-                        }}
+                        onError={handleImageError}
                       />
                     </div>
                     <div className="flex-1 min-w-0">
@@ -2631,12 +2643,10 @@ export default function App() {
                         title={`GitHub: ${imgItem.name}`}
                       >
                         <img
-                          src={imgItem.url}
+                          src={imgItem.localUrl || imgItem.url}
                           alt={imgItem.name}
                           className="w-full h-full object-cover rounded"
-                          onError={e => {
-                            e.target.src = 'https://images.unsplash.com/photo-1527842891421-42eec6e703ea?w=200';
-                          }}
+                          onError={handleImageError}
                         />
                         <span className="absolute bottom-0 right-0 bg-emerald-700/90 text-white text-[8px] font-bold px-1 rounded-tl leading-tight">
                           git
@@ -2657,7 +2667,7 @@ export default function App() {
                         }`}
                         title={preset.label}
                       >
-                        <img src={preset.url} alt={preset.label} className="w-full h-full object-cover rounded" />
+                        <img src={preset.url} alt={preset.label} className="w-full h-full object-cover rounded" onError={handleImageError} />
                       </button>
                     ))}
                   </div>
