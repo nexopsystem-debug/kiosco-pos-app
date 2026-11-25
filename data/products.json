@@ -97,5 +97,14 @@
     "stock": 5,
     "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/1000407138-1795576816948.jpg",
     "is_active": true
+  },
+  {
+    "id": 23,
+    "name": "Caja Lucky Strike Verde",
+    "category": "Cigarros",
+    "price_usd": 3.7,
+    "stock": 8,
+    "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/1000407139-1795576860369.jpg",
+    "is_active": true
   }
 ]
