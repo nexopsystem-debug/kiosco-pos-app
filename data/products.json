@@ -214,5 +214,14 @@
     "stock": 8,
     "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/product_photography_on_podium_-1795579435553.jpg",
     "is_active": true
+  },
+  {
+    "id": 36,
+    "name": "Tocinetikas Picante",
+    "category": "Snacks",
+    "price_usd": 1.2,
+    "stock": 6,
+    "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/studio_product_photography_on_-1795579481443.jpg",
+    "is_active": true
   }
 ]
