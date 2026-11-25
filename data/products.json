@@ -160,5 +160,14 @@
     "stock": 5,
     "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/doritos_bag_on_podium_82a9e5fc-1795579163115.jpg",
     "is_active": true
+  },
+  {
+    "id": 30,
+    "name": "Doritos Pequeño",
+    "category": "Snacks",
+    "price_usd": 1.5,
+    "stock": 0,
+    "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/doritos_bag_on_podium_82a9e5fc-1795579204947.jpg",
+    "is_active": true
   }
 ]
