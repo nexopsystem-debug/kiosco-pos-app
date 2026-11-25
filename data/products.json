@@ -511,5 +511,14 @@
     "stock": 20,
     "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/studio_product_photography_on_-1795582846805.jpg",
     "is_active": true
+  },
+  {
+    "id": 69,
+    "name": "Caja Consult",
+    "category": "Cigarros",
+    "price_usd": 2.5,
+    "stock": 20,
+    "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/gemini_generated_image_yaoyvry-1795584569901.jpg",
+    "is_active": true
   }
 ]
