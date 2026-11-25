@@ -4,7 +4,7 @@
     "name": "Pepsi 2L",
     "category": "Bebidas",
     "price_usd": 2,
-    "stock": 6,
+    "stock": 5,
     "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/1000398302-1794800499868.jpg",
     "is_active": true
   },
@@ -18,29 +18,11 @@
     "is_active": true
   },
   {
-    "id": 5,
-    "name": "Chocolate Savoy con Leche",
-    "category": "Golosinas",
-    "price_usd": 1.2,
-    "stock": 15,
-    "image_url": "https://images.unsplash.com/photo-1606312619070-d48b4c652a52?w=500&auto=format&fit=crop&q=80",
-    "is_active": true
-  },
-  {
-    "id": 8,
-    "name": "Pirulin Lata 300g",
-    "category": "Golosinas",
-    "price_usd": 3.5,
-    "stock": 8,
-    "image_url": "https://images.unsplash.com/photo-1582293041079-7814c2f12063?w=500&auto=format&fit=crop&q=80",
-    "is_active": true
-  },
-  {
     "id": 14,
-    "name": "Agua Mineral Heleal 1L",
+    "name": "Agua Mineral Heleal 1.5L",
     "category": "Bebidas",
-    "price_usd": 1.2,
-    "stock": 6,
+    "price_usd": 1.4,
+    "stock": 5,
     "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/1000398303-1794801442084.jpg",
     "is_active": true
   },
@@ -76,7 +58,7 @@
     "name": "Cigarros Belmont Detallado",
     "category": "Cigarros",
     "price_usd": 0.3,
-    "stock": 20,
+    "stock": 18,
     "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/1000398309-1794802049748.jpg",
     "is_active": true
   },
@@ -103,8 +85,17 @@
     "name": "Cigarros Lucky Strike Rojo Detallado",
     "category": "Cigarros",
     "price_usd": 0.3,
-    "stock": 20,
+    "stock": 19,
     "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/1000398311-1794802171010.jpg",
+    "is_active": true
+  },
+  {
+    "id": 22,
+    "name": "Caja de Lucky Strike Rojo",
+    "category": "Cigarros",
+    "price_usd": 3.7,
+    "stock": 5,
+    "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/1000407138-1795576816948.jpg",
     "is_active": true
   }
 ]
