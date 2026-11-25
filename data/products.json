@@ -385,5 +385,14 @@
     "stock": 20,
     "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/product_on_studio_podium_f664b-1795581777314.jpg",
     "is_active": true
+  },
+  {
+    "id": 55,
+    "name": "Glup Fresh Pequeño",
+    "category": "Bebidas",
+    "price_usd": 0.8,
+    "stock": 20,
+    "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/studio_product_photography_on_-1795581814434.jpg",
+    "is_active": true
   }
 ]
