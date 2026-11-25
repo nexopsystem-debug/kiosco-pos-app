@@ -752,12 +752,6 @@ app.get('/api/uploads/recent', async (req, res) => {
   }
 });
 
-    res.json({ success: true, images: images.slice(0, 15) });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
 // ==========================================
 // 3. ENDPOINTS DE VENTAS (POS)
 // ==========================================
