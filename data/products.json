@@ -10,11 +10,11 @@
   },
   {
     "id": 4,
-    "name": "Agua Mineral Heleal 600ml",
+    "name": "Agua Mineral Heleal Pequeña",
     "category": "Bebidas",
     "price_usd": 0.8,
     "stock": 24,
-    "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/1000398304-1794801361726.jpg",
+    "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/product_on_studio_podium_c6a29-1795580092336.jpg",
     "is_active": true
   },
   {
