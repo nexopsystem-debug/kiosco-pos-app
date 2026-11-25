@@ -106,5 +106,14 @@
     "stock": 8,
     "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/1000407139-1795576860369.jpg",
     "is_active": true
+  },
+  {
+    "id": 24,
+    "name": "Caja de Belmont",
+    "category": "Cigarros",
+    "price_usd": 3.5,
+    "stock": 10,
+    "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/1000407141-1795576897533.jpg",
+    "is_active": true
   }
 ]
