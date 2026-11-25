@@ -223,5 +223,14 @@
     "stock": 6,
     "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/studio_product_photography_on_-1795579481443.jpg",
     "is_active": true
+  },
+  {
+    "id": 37,
+    "name": "Tocinetikas Original",
+    "category": "Snacks",
+    "price_usd": 0.8,
+    "stock": 6,
+    "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/product_on_studio_podium_2e579-1795579525179.jpg",
+    "is_active": true
   }
 ]
