@@ -205,5 +205,14 @@
     "stock": 10,
     "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/product_on_podium_in_studio_05-1795579395100.jpg",
     "is_active": true
+  },
+  {
+    "id": 35,
+    "name": "De Todito",
+    "category": "Snacks",
+    "price_usd": 1.1,
+    "stock": 8,
+    "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/product_photography_on_podium_-1795579435553.jpg",
+    "is_active": true
   }
 ]
