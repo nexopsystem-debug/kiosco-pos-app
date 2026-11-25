@@ -502,5 +502,14 @@
     "stock": 20,
     "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/product_on_studio_podium_b8081-1795582823152.jpg",
     "is_active": true
+  },
+  {
+    "id": 68,
+    "name": "Mentos Menta",
+    "category": "Caramelos",
+    "price_usd": 1,
+    "stock": 20,
+    "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/verify-ping-1795576674769.png",
+    "is_active": true
   }
 ]
