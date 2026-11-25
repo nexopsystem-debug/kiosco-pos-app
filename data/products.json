@@ -277,5 +277,14 @@
     "stock": 3,
     "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/product_on_studio_podium_b4d32-1795579726016.jpg",
     "is_active": true
+  },
+  {
+    "id": 43,
+    "name": "Flips Caja Chocolate",
+    "category": "Snacks",
+    "price_usd": 3.5,
+    "stock": 5,
+    "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/product_photography_on_white_p-1795579763295.jpg",
+    "is_active": true
   }
 ]
