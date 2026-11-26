@@ -547,5 +547,14 @@
     "stock": 5,
     "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/1000408178-1795668180380.jpg",
     "is_active": true
+  },
+  {
+    "id": 73,
+    "name": "Gomitas Gumiyan",
+    "category": "Gomitas",
+    "price_usd": 0.5,
+    "stock": 6,
+    "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/1000408172-1795668260023.jpg",
+    "is_active": true
   }
 ]
