@@ -565,5 +565,14 @@
     "stock": 20,
     "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/1000408171-1795668300291.jpg",
     "is_active": true
+  },
+  {
+    "id": 75,
+    "name": "AGOGÓ Verde",
+    "category": "Chicles",
+    "price_usd": 0.6,
+    "stock": 20,
+    "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/1000408170-1795668344613.jpg",
+    "is_active": true
   }
 ]
