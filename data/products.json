@@ -283,7 +283,7 @@
     "name": "Flips Caja Chocolate",
     "category": "Galletas",
     "price_usd": 3.5,
-    "stock": 5,
+    "stock": 4,
     "image_url": "https://raw.githubusercontent.com/nexopsystem-debug/kiosco-pos-app/main/public/uploads/product_photography_on_white_p-1795579763295.jpg",
     "is_active": true
   },
